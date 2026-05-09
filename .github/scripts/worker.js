@@ -1,7 +1,3 @@
-// .github/scripts/worker.js
-// Runs inside GitHub Actions. Has access to env vars set as workflow inputs + secrets.
-// Handles: download from GDrive → extract ZIP → AI rename → upload to Telegram
-
 import fs from "fs";
 import path from "path";
 import { TelegramClient } from "telegram";
@@ -11,13 +7,12 @@ import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
 
-// ─── Config from env (injected by workflow) ───────────────────────────────────
-const FILE_ID        = process.env.INPUT_FILE_ID;
-const CHAT_ID        = process.env.INPUT_CHAT_ID;
-const JOB_ID         = process.env.INPUT_JOB_ID;
-const CALLBACK_URL   = process.env.INPUT_CALLBACK_URL || "";
+const FILE_ID         = process.env.INPUT_FILE_ID;
+const CHAT_ID         = process.env.INPUT_CHAT_ID;
+const JOB_ID          = process.env.INPUT_JOB_ID;
+const CALLBACK_URL    = process.env.INPUT_CALLBACK_URL || "";
 const CALLBACK_SECRET = process.env.INPUT_CALLBACK_SECRET || "";
-const AUNT_USERNAME  = process.env.INPUT_AUNT_USERNAME;
+const AUNT_USERNAME   = process.env.INPUT_AUNT_USERNAME;
 
 const TELEGRAM_API_ID   = Number(process.env.TELEGRAM_API_ID);
 const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH;
@@ -27,26 +22,24 @@ const GROQ_API_KEY      = process.env.GROQ_API_KEY;
 
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"];
 
-// ─── Telegram Bot API (for status messages — no gramjs needed for this) ───────
-async function botSend(text) {
-  if (!BOT_TOKEN || !CHAT_ID) return;
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: CHAT_ID, text }),
-  }).catch(() => {});
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-// ─── Callback to your server ──────────────────────────────────────────────────
+function formatSpeed(bytesPerSec) {
+  if (bytesPerSec > 1024 * 1024) return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+}
+
+function buildBar(pct, width = 12) {
+  const filled = Math.round((pct / 100) * width);
+  return "▐" + "█".repeat(filled) + "░".repeat(width - filled) + "▌";
+}
+
 async function callback(event, message) {
   console.log(`[${event}] ${message}`);
-  // Always send via Telegram Bot API as well (instant, no server needed)
-  await botSend(
-    event === "done" ? `✓ ${message}` :
-    event === "error" ? `✗ ${message}` :
-    `⏳ ${message}`
-  );
 
   if (!CALLBACK_URL) return;
   try {
@@ -66,7 +59,6 @@ async function callback(event, message) {
   }
 }
 
-// ─── GDrive download ──────────────────────────────────────────────────────────
 function contentTypeToExt(contentType) {
   if (!contentType) return null;
   const ct = contentType.toLowerCase().split(";")[0].trim();
@@ -83,7 +75,6 @@ function contentTypeToExt(contentType) {
 
 async function downloadFile(fileId, destPath) {
   const url = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
-  console.log("downloading from", url);
 
   const response = await axios.get(url, {
     responseType: "stream",
@@ -99,19 +90,19 @@ async function downloadFile(fileId, destPath) {
   let lastReported = 0;
   const startTime = Date.now();
 
-  response.data.on("data", (chunk) => {
+  response.data.on("data", async (chunk) => {
     downloaded += chunk.length;
     const pct = total ? Math.floor((downloaded / total) * 100) : 0;
-    // Log every 10% to avoid spamming
     if (pct - lastReported >= 10) {
       lastReported = pct;
       const elapsed = (Date.now() - startTime) / 1000 || 0.001;
       const speed = downloaded / elapsed;
-      const speedStr =
-        speed > 1024 * 1024
-          ? `${(speed / 1024 / 1024).toFixed(1)} MB/s`
-          : `${(speed / 1024).toFixed(1)} KB/s`;
-      console.log(`download: ${pct}% at ${speedStr}`);
+      const bar = buildBar(pct);
+      const msg = total
+        ? `Downloading\n${bar} ${pct}%\n${formatBytes(downloaded)} / ${formatBytes(total)}  |  ${formatSpeed(speed)}`
+        : `Downloading\n${formatBytes(downloaded)} downloaded  |  ${formatSpeed(speed)}`;
+      console.log(msg.replace(/\n/g, "  "));
+      await callback("progress", msg);
     }
   });
 
@@ -150,9 +141,7 @@ async function downloadFile(fileId, destPath) {
   });
 }
 
-// ─── ZIP extraction ───────────────────────────────────────────────────────────
 async function extractZip(zipPath, destDir) {
-  console.log("extracting", zipPath, "→", destDir);
   await fs
     .createReadStream(zipPath)
     .pipe(unzipper.Extract({ path: destDir }))
@@ -173,18 +162,15 @@ async function extractZip(zipPath, destDir) {
     })
     .sort((a, b) => a.originalName.localeCompare(b.originalName));
 
-  console.log(`found ${videoFiles.length} video files`);
   return videoFiles;
 }
 
-// ─── AI rename ────────────────────────────────────────────────────────────────
 async function aiRenameFiles(fileNames) {
   const groq = new OpenAI({
     apiKey: GROQ_API_KEY,
     baseURL: "https://api.groq.com/openai/v1",
   });
 
-  console.log("calling groq for rename");
   const numbered = fileNames.map((n, i) => `${i + 1}. ${n}`).join("\n");
 
   const completion = await groq.chat.completions.create({
@@ -211,15 +197,12 @@ Return only a JSON array of the cleaned names in the same order. No markdown, no
   try {
     const text   = completion.choices[0].message.content.trim();
     const parsed = JSON.parse(text);
-    console.log("rename complete");
     return parsed;
   } catch {
-    console.log("groq parse failed, using original names");
     return fileNames;
   }
 }
 
-// ─── Telegram upload via gramjs ───────────────────────────────────────────────
 let gramClient = null;
 
 async function initGramClient() {
@@ -232,7 +215,6 @@ async function initGramClient() {
     baseLogger: silentLogger,
   });
   await gramClient.connect();
-  console.log("gramjs connected");
 }
 
 async function sendVideoToAunt(filePath, renamedName, fileIndex, total) {
@@ -251,25 +233,22 @@ async function sendVideoToAunt(filePath, renamedName, fileIndex, total) {
     file: renamedPath,
     forceDocument: true,
     workers: 15,
-    progressCallback: (progress) => {
+    progressCallback: async (progress) => {
       const pct = Math.floor(progress * 100);
       if (pct !== lastPct && pct % 20 === 0) {
         lastPct = pct;
         const elapsed = (Date.now() - startTime) / 1000 || 0.001;
         const speed   = (progress * fileSize) / elapsed;
-        const speedStr =
-          speed > 1024 * 1024
-            ? `${(speed / 1024 / 1024).toFixed(1)} MB/s`
-            : `${(speed / 1024).toFixed(1)} KB/s`;
-        console.log(`upload [${fileIndex}/${total}] ${renamedName}: ${pct}% at ${speedStr}`);
+        const uploaded = progress * fileSize;
+        const bar = buildBar(pct);
+        const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
+        console.log(msg.replace(/\n/g, "  "));
+        await callback("progress", msg);
       }
     },
   });
-
-  console.log(`sent: ${renamedName}`);
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (!FILE_ID || !CHAT_ID || !JOB_ID) {
     console.error("missing required inputs: INPUT_FILE_ID, INPUT_CHAT_ID, INPUT_JOB_ID");
@@ -278,21 +257,17 @@ async function main() {
 
   fs.mkdirSync("tmp", { recursive: true });
 
-  // ── 1. Download ──────────────────────────────────────────────────────────
-  await callback("progress", "downloading from Google Drive...");
+  await callback("progress", "Connecting to Google Drive...");
 
   const tmpPath = `tmp/download_${Date.now()}.tmp`;
   let result;
   try {
     result = await downloadFile(FILE_ID, tmpPath);
   } catch (err) {
-    await callback("error", `download failed: ${err.message}`);
+    await callback("error", `Download failed: ${err.message}`);
     process.exit(1);
   }
 
-  await callback("progress", `downloaded (${result.type}) — preparing files...`);
-
-  // ── 2. Resolve file list ─────────────────────────────────────────────────
   let files = [];
 
   if (result.type === "video") {
@@ -306,29 +281,27 @@ async function main() {
       size:         stat.size,
     }];
   } else {
-    // ZIP
-    const zipPath  = `tmp/archive_${Date.now()}.zip`;
+    const zipPath    = `tmp/archive_${Date.now()}.zip`;
     const extractDir = `tmp/extracted_${Date.now()}/`;
     fs.renameSync(tmpPath, zipPath);
 
-    await callback("progress", "extracting ZIP...");
+    await callback("progress", "Extracting ZIP archive...");
     try {
       fs.mkdirSync(extractDir, { recursive: true });
       files = await extractZip(zipPath, extractDir);
-      fs.rmSync(zipPath, { force: true }); // free space immediately
+      fs.rmSync(zipPath, { force: true });
     } catch (err) {
-      await callback("error", `extraction failed: ${err.message}`);
+      await callback("error", `Extraction failed: ${err.message}`);
       process.exit(1);
     }
 
     if (files.length === 0) {
-      await callback("error", "no video files found in ZIP");
+      await callback("error", "No video files found in ZIP");
       process.exit(1);
     }
   }
 
-  // ── 3. AI rename ─────────────────────────────────────────────────────────
-  await callback("progress", `found ${files.length} file(s) — AI renaming...`);
+  await callback("progress", `Found ${files.length} file(s) — running AI rename...`);
 
   try {
     const originalNames = files.map((f) => f.originalName);
@@ -339,40 +312,33 @@ async function main() {
     }));
   } catch (err) {
     console.log("groq error, using original names:", err.message);
-    // non-fatal — continue with original names
   }
 
-  // ── 4. Connect gramjs & upload ───────────────────────────────────────────
-  await callback("progress", `uploading ${files.length} file(s) to Telegram...`);
+  await callback("progress", `Starting upload of ${files.length} file(s) to Telegram...`);
 
   try {
     await initGramClient();
   } catch (err) {
-    await callback("error", `gramjs connect failed: ${err.message}`);
+    await callback("error", `Telegram connect failed: ${err.message}`);
     process.exit(1);
   }
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    await callback(
-      "progress",
-      `uploading ${i + 1}/${files.length}: ${file.renamedName}`,
-    );
     try {
       await sendVideoToAunt(file.fullPath, file.renamedName, i + 1, files.length);
     } catch (err) {
-      // non-fatal per file — report but continue
-      await callback("progress", `⚠ failed to send ${file.renamedName}: ${err.message}`);
+      await callback("progress", `Failed to send ${file.renamedName}: ${err.message}`);
     }
-    // Clean up each file after upload to keep runner disk tidy
     fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
   }
 
   await gramClient.disconnect();
 
+  const totalSize = files.reduce((s, f) => s + f.size, 0);
   await callback(
     "done",
-    `all ${files.length} file(s) sent to Telegram successfully! 🎉`,
+    `Done — ${files.length} file(s) sent\nTotal: ${formatBytes(totalSize)}\n${files.map((f) => `  ${f.renamedName}`).join("\n")}`,
   );
 }
 
