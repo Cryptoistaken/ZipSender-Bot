@@ -10,6 +10,7 @@ import unzipper from "unzipper";
 const FILE_ID         = process.env.INPUT_FILE_ID;
 const CHAT_ID         = process.env.INPUT_CHAT_ID;
 const JOB_ID          = process.env.INPUT_JOB_ID;
+const MSG_ID          = process.env.INPUT_MSG_ID ? Number(process.env.INPUT_MSG_ID) : null;
 const CALLBACK_URL    = process.env.INPUT_CALLBACK_URL || "";
 const CALLBACK_SECRET = process.env.INPUT_CALLBACK_SECRET || "";
 const AUNT_USERNAME   = process.env.INPUT_AUNT_USERNAME;
@@ -38,8 +39,39 @@ function buildBar(pct, width = 12) {
   return "▐" + "█".repeat(filled) + "░".repeat(width - filled) + "▌";
 }
 
+let statusMsgId = MSG_ID || null;
+
+async function editOrSend(text) {
+  if (!BOT_TOKEN || !CHAT_ID) return;
+  const base = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+  if (statusMsgId) {
+    try {
+      await fetch(`${base}/editMessageText`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: CHAT_ID, message_id: statusMsgId, text }),
+      });
+      return;
+    } catch {}
+  }
+
+  try {
+    const res = await fetch(`${base}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: CHAT_ID, text }),
+    });
+    const data = await res.json();
+    if (data.ok) statusMsgId = data.result.message_id;
+  } catch (e) {
+    console.log("telegram send failed:", e.message);
+  }
+}
+
 async function callback(event, message) {
   console.log(`[${event}] ${message}`);
+  await editOrSend(message);
 
   if (!CALLBACK_URL) return;
   try {

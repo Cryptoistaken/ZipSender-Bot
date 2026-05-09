@@ -371,6 +371,7 @@ bot.on(message("text"), async (ctx) => {
     job_id: jobId,
     file_id: fileId,
     chat_id: chatId,
+    msg_id: String(statusMsg.message_id),
     callback_url: process.env.CALLBACK_URL || "",
     callback_secret: CALLBACK_SECRET,
     aunt_username: process.env.AUNT_USERNAME,
