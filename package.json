@@ -3,19 +3,19 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "start":       "node index.js",
-    "start:v1":    "node scripts/v1/index.js",
-    "setup:v1":    "node scripts/v1/index.js --setup"
+    "start": "node index.js",
+    "start:v1": "node scripts/v1/index.js",
+    "setup:v1": "node scripts/v1/index.js --setup"
   },
   "dependencies": {
-    "axios":    "^1.9.0",
-    "chalk":    "^5.4.1",
-    "dotenv":   "^16.5.0",
-    "input":    "^1.0.1",
-    "openai":   "^4.98.0",
+    "axios": "^1.9.0",
+    "chalk": "^5.4.1",
+    "dotenv": "^16.5.0",
+    "input": "^1.0.1",
+    "openai": "^4.98.0",
     "telegraf": "^4.16.3",
     "telegram": "^2.26.22",
     "unzipper": "^0.12.3",
-    "ws":       "v1.3.9"
+    "ws": "^7.5.10"
   }
 }
