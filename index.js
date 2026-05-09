@@ -112,6 +112,8 @@ async function handleCallback(bot, payload) {
   const cid = chat_id || job?.chatId;
   if (!cid) return;
 
+  if (job) job.workerActive = true;
+
   if (event === "progress") {
     if (job?.msgId) {
       await bot.telegram
@@ -146,15 +148,6 @@ async function pollJobUntilDone(bot, jobId, runId) {
   const job = jobs.get(jobId);
   if (!job) return;
 
-  const phases = [
-    "Queued on GitHub...",
-    "Runner starting...",
-    "Downloading file...",
-    "Extracting and uploading...",
-  ];
-  let phaseIndex = 0;
-  let lastStatus = "";
-
   while (true) {
     await sleep(15000);
     const job2 = jobs.get(jobId);
@@ -167,35 +160,34 @@ async function pollJobUntilDone(bot, jobId, runId) {
       continue;
     }
 
-    if (runStatus.status === "in_progress" && lastStatus !== "in_progress") {
-      lastStatus = "in_progress";
-      phaseIndex = 1;
-    }
-    if (runStatus.status === "in_progress") {
-      phaseIndex = Math.min(phaseIndex + 1, phases.length - 1);
-    }
-
-    const displayMsg =
-      runStatus.status === "completed"
-        ? runStatus.conclusion === "success"
-          ? `Done — all files sent to Telegram`
-          : `Worker failed (${runStatus.conclusion}) — check GitHub Actions logs`
-        : phases[phaseIndex];
-
-    try {
-      if (job2.msgId) {
+    if (runStatus.status === "completed") {
+      if (runStatus.conclusion !== "success" && job2.msgId) {
         await bot.telegram.editMessageText(
           job2.chatId,
           job2.msgId,
           null,
-          displayMsg,
-        );
+          `Worker failed (${runStatus.conclusion}) — check GitHub Actions logs`,
+        ).catch(() => {});
       }
-    } catch {}
-
-    if (runStatus.status === "completed") {
       jobs.delete(jobId);
       return;
+    }
+
+    if (job2.workerActive) continue;
+
+    if (runStatus.status === "in_progress") continue;
+
+    if (runStatus.status !== "completed") {
+      try {
+        if (job2.msgId) {
+          await bot.telegram.editMessageText(
+            job2.chatId,
+            job2.msgId,
+            null,
+            "Queued on GitHub — runner starting...",
+          );
+        }
+      } catch {}
     }
   }
 }
