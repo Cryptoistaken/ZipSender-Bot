@@ -398,10 +398,10 @@ bot.on(message("text"), async (ctx) => {
   const extractExists =
     cached && cached.extractDir && fs.existsSync(cached.extractDir);
 
-  let statusText = "downloading...";
-  if (videoExists) statusText = "using cached video...";
-  else if (zipExists && extractExists) statusText = "using cached files...";
-  else if (zipExists) statusText = "using cached zip...";
+  let statusText = "downloading";
+  if (videoExists) statusText = "using cached video";
+  else if (zipExists && extractExists) statusText = "using cached files";
+  else if (zipExists) statusText = "using cached zip";
 
   const statusMsg = await ctx.reply(statusText);
 
@@ -536,7 +536,7 @@ bot.on(message("text"), async (ctx) => {
           ctx.chat.id,
           statusMsg.message_id,
           null,
-          "extracting...",
+          "extracting",
         );
         try {
           fs.mkdirSync(extractDir, { recursive: true });
@@ -588,7 +588,7 @@ bot.action("rename_all", async (ctx) => {
     return;
   }
 
-  await ctx.editMessageText("renaming with AI...");
+  await ctx.editMessageText("renaming with AI");
 
   const originalNames = session.files.map((f) => f.originalName);
   let newNames;
@@ -628,7 +628,7 @@ bot.action("send_all", async (ctx) => {
 
   const total = session.files.length;
   const progressMsg = await ctx.reply(
-    `sending ${total} files to ${process.env.AUNT_USERNAME}...`,
+    `sending ${total} files to ${process.env.AUNT_USERNAME}`,
   );
 
   (async () => {

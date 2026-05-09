@@ -5,11 +5,11 @@ import { Telegraf, Markup } from "telegraf";
 import { message } from "telegraf/filters";
 import chalk from "chalk";
 
-const GH_TOKEN  = process.env.GITHUB_TOKEN;
-const GH_OWNER  = process.env.GITHUB_OWNER;
-const GH_REPO   = process.env.GITHUB_REPO;
+const GH_TOKEN = process.env.GITHUB_TOKEN;
+const GH_OWNER = process.env.GITHUB_OWNER;
+const GH_REPO = process.env.GITHUB_REPO;
 const GH_BRANCH = process.env.GITHUB_BRANCH || "main";
-const WORKFLOW  = "worker.yml";
+const WORKFLOW = "worker.yml";
 
 const jobs = new Map();
 
@@ -67,14 +67,17 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const CALLBACK_PORT   = process.env.CALLBACK_PORT ? Number(process.env.CALLBACK_PORT) : null;
+const CALLBACK_PORT = process.env.CALLBACK_PORT
+  ? Number(process.env.CALLBACK_PORT)
+  : null;
 const CALLBACK_SECRET = process.env.CALLBACK_SECRET || "";
 
 function startCallbackServer(bot) {
   if (!CALLBACK_PORT) {
     console.log(chalk.gray("no CALLBACK_PORT set — using polling only"));
     return;
-  }  const server = http.createServer(async (req, res) => {
+  }
+  const server = http.createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== "/callback") {
       res.writeHead(404);
       res.end();
@@ -162,12 +165,14 @@ async function pollJobUntilDone(bot, jobId, runId) {
 
     if (runStatus.status === "completed") {
       if (runStatus.conclusion !== "success" && job2.msgId) {
-        await bot.telegram.editMessageText(
-          job2.chatId,
-          job2.msgId,
-          null,
-          `Worker failed (${runStatus.conclusion}) — check GitHub Actions logs`,
-        ).catch(() => {});
+        await bot.telegram
+          .editMessageText(
+            job2.chatId,
+            job2.msgId,
+            null,
+            `Worker failed (${runStatus.conclusion}) — check GitHub Actions logs`,
+          )
+          .catch(() => {});
       }
       jobs.delete(jobId);
       return;
@@ -184,7 +189,7 @@ async function pollJobUntilDone(bot, jobId, runId) {
             job2.chatId,
             job2.msgId,
             null,
-            "Queued on GitHub — runner starting...",
+            "Queued on GitHub — runner starting",
           );
         }
       } catch {}
@@ -194,8 +199,14 @@ async function pollJobUntilDone(bot, jobId, runId) {
 
 const isSetup = process.argv.includes("--setup");
 if (isSetup) {
-  console.log(chalk.bold("setup mode: run scripts/v1/index.js --setup instead"));
-  console.log(chalk.gray("The coordinator bot does not need gramjs. Setup is only needed for the GitHub Actions worker."));
+  console.log(
+    chalk.bold("setup mode: run scripts/v1/index.js --setup instead"),
+  );
+  console.log(
+    chalk.gray(
+      "The coordinator bot does not need gramjs. Setup is only needed for the GitHub Actions worker.",
+    ),
+  );
   process.exit(0);
 }
 
@@ -211,7 +222,10 @@ bot.use(async (ctx, next) => {
 
 const mainKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback("Run Debug", "action:debug")],
-  [Markup.button.callback("Active Jobs", "action:jobs"), Markup.button.callback("Cancel Latest", "action:cancel")],
+  [
+    Markup.button.callback("Active Jobs", "action:jobs"),
+    Markup.button.callback("Cancel Latest", "action:cancel"),
+  ],
 ]);
 
 bot.command("start", async (ctx) => {
@@ -227,7 +241,7 @@ async function handleDebug(ctx) {
   const missing = [];
   if (!GH_TOKEN) missing.push("GITHUB_TOKEN");
   if (!GH_OWNER) missing.push("GITHUB_OWNER");
-  if (!GH_REPO)  missing.push("GITHUB_REPO");
+  if (!GH_REPO) missing.push("GITHUB_REPO");
   if (missing.length) {
     await ctx.reply(`Missing env vars: ${missing.join(", ")}`);
     return;
@@ -238,7 +252,7 @@ async function handleDebug(ctx) {
   lines.push(`  branch: ${GH_BRANCH}`);
   lines.push(`  token:  ${GH_TOKEN.slice(0, 10)}...`);
 
-  const sent = await ctx.reply(lines.join("\n") + "\n\nChecking GitHub API...");
+  const sent = await ctx.reply(lines.join("\n") + "\n\nChecking GitHub API");
   const edit = (text) =>
     ctx.telegram
       .editMessageText(ctx.chat.id, sent.message_id, null, text)
@@ -256,11 +270,15 @@ async function handleDebug(ctx) {
       return;
     }
     if (r.status === 401 || r.status === 403) {
-      lines.push(`token rejected (${r.status}) — check GITHUB_TOKEN and its permissions`);
+      lines.push(
+        `token rejected (${r.status}) — check GITHUB_TOKEN and its permissions`,
+      );
       await edit(lines.join("\n"));
       return;
     }
-    lines.push(`repo: ${data.full_name} (${data.private ? "private" : "public"})`);
+    lines.push(
+      `repo: ${data.full_name} (${data.private ? "private" : "public"})`,
+    );
   } catch (e) {
     lines.push(`GitHub API unreachable: ${e.message}`);
     await edit(lines.join("\n"));
@@ -298,7 +316,9 @@ async function handleDebug(ctx) {
       { headers: githubHeaders() },
     );
     if (r.status === 404) {
-      lines.push(`branch "${GH_BRANCH}" not found — check GITHUB_BRANCH in .env`);
+      lines.push(
+        `branch "${GH_BRANCH}" not found — check GITHUB_BRANCH in .env`,
+      );
     } else {
       lines.push(`branch "${GH_BRANCH}": ok`);
     }
@@ -318,7 +338,10 @@ async function handleJobs(ctx) {
     const age = Math.floor((Date.now() - j.startedAt) / 1000);
     return `  ${id.slice(0, 8)}  fileId: ${j.fileId.slice(0, 12)}  ${age}s ago`;
   });
-  await ctx.reply(`Active jobs (${jobs.size}):\n${lines.join("\n")}`, mainKeyboard);
+  await ctx.reply(
+    `Active jobs (${jobs.size}):\n${lines.join("\n")}`,
+    mainKeyboard,
+  );
 }
 
 async function handleCancel(ctx) {
@@ -338,12 +361,24 @@ async function handleCancel(ctx) {
   } catch {}
 
   jobs.delete(jobId);
-  await ctx.reply("Cancel requested — GitHub runner will stop shortly.", mainKeyboard);
+  await ctx.reply(
+    "Cancel requested — GitHub runner will stop shortly.",
+    mainKeyboard,
+  );
 }
 
-bot.action("action:debug",  async (ctx) => { await ctx.answerCbQuery(); await handleDebug(ctx);  });
-bot.action("action:jobs",   async (ctx) => { await ctx.answerCbQuery(); await handleJobs(ctx);   });
-bot.action("action:cancel", async (ctx) => { await ctx.answerCbQuery(); await handleCancel(ctx); });
+bot.action("action:debug", async (ctx) => {
+  await ctx.answerCbQuery();
+  await handleDebug(ctx);
+});
+bot.action("action:jobs", async (ctx) => {
+  await ctx.answerCbQuery();
+  await handleJobs(ctx);
+});
+bot.action("action:cancel", async (ctx) => {
+  await ctx.answerCbQuery();
+  await handleCancel(ctx);
+});
 
 bot.on(message("text"), async (ctx) => {
   const chatId = String(ctx.chat.id);
@@ -355,7 +390,7 @@ bot.on(message("text"), async (ctx) => {
     return;
   }
 
-  const statusMsg = await ctx.reply("Starting GitHub Actions worker...");
+  const statusMsg = await ctx.reply("Starting GitHub Actions worker");
 
   const jobId = `${chatId}_${Date.now()}`;
 
