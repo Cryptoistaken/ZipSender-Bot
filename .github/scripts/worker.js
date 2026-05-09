@@ -117,6 +117,11 @@ async function downloadFile(fileId, destPath) {
   const contentType = response.headers["content-type"] || "";
   const videoExtFromHeader = contentTypeToExt(contentType);
 
+  const disposition = response.headers["content-disposition"] || "";
+  let originalFilename = null;
+  const fnMatch = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)["']?/i);
+  if (fnMatch) originalFilename = decodeURIComponent(fnMatch[1].trim());
+
   const total = parseInt(response.headers["content-length"] || "0", 10);
   let downloaded = 0;
   let lastReported = 0;
@@ -156,15 +161,15 @@ async function downloadFile(fileId, destPath) {
         (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x00);
 
       if (isZip) {
-        resolve({ type: "zip", ext: ".zip" });
+        resolve({ type: "zip", ext: ".zip", originalFilename });
       } else if (videoExtFromHeader) {
-        resolve({ type: "video", ext: videoExtFromHeader });
+        resolve({ type: "video", ext: videoExtFromHeader, originalFilename });
       } else if (isMkv) {
-        resolve({ type: "video", ext: ".mkv" });
+        resolve({ type: "video", ext: ".mkv", originalFilename });
       } else if (isAvi) {
-        resolve({ type: "video", ext: ".avi" });
+        resolve({ type: "video", ext: ".avi", originalFilename });
       } else if (isMp4) {
-        resolve({ type: "video", ext: ".mp4" });
+        resolve({ type: "video", ext: ".mp4", originalFilename });
       } else {
         reject(new Error("unrecognized file type — check the file is publicly shared on Drive"));
       }
@@ -267,7 +272,7 @@ async function sendVideoToAunt(filePath, renamedName, fileIndex, total) {
     workers: 15,
     progressCallback: async (progress) => {
       const pct = Math.floor(progress * 100);
-      if (pct !== lastPct && pct % 20 === 0) {
+      if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
         lastPct = pct;
         const elapsed = (Date.now() - startTime) / 1000 || 0.001;
         const speed   = (progress * fileSize) / elapsed;
@@ -306,9 +311,11 @@ async function main() {
     const videoPath = `tmp/video_${Date.now()}${result.ext}`;
     fs.renameSync(tmpPath, videoPath);
     const stat = fs.statSync(videoPath);
+    const guessedName = result.originalFilename || `video${result.ext}`;
+    const nameWithExt = path.extname(guessedName) ? guessedName : guessedName + result.ext;
     files = [{
-      originalName: path.basename(videoPath),
-      renamedName:  path.basename(videoPath),
+      originalName: nameWithExt,
+      renamedName:  nameWithExt,
       fullPath:     videoPath,
       size:         stat.size,
     }];
