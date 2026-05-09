@@ -6,11 +6,11 @@ import { message } from "telegraf/filters";
 import chalk from "chalk";
 
 // ─── GitHub Actions trigger config ───────────────────────────────────────────
-const GH_TOKEN  = process.env.GITHUB_TOKEN;       // fine-grained PAT
-const GH_OWNER  = process.env.GITHUB_OWNER;       // your github username
-const GH_REPO   = process.env.GITHUB_REPO;        // repo name
+const GH_TOKEN = process.env.GITHUB_TOKEN; // fine-grained PAT
+const GH_OWNER = process.env.GITHUB_OWNER; // your github username
+const GH_REPO = process.env.GITHUB_REPO; // repo name
 const GH_BRANCH = process.env.GITHUB_BRANCH || "main";
-const WORKFLOW  = "worker.yml";
+const WORKFLOW = "worker.yml";
 
 // ─── In-memory job tracking ───────────────────────────────────────────────────
 // jobId → { chatId, msgId, fileId, status, startedAt }
@@ -85,7 +85,9 @@ function sleep(ms) {
 // Actions worker calls POST /callback with JSON { job_id, event, message }
 // This is optional but gives real-time updates. Set CALLBACK_PORT in .env.
 // If you don't have a public URL, the bot falls back to polling run status.
-const CALLBACK_PORT = process.env.CALLBACK_PORT ? Number(process.env.CALLBACK_PORT) : null;
+const CALLBACK_PORT = process.env.CALLBACK_PORT
+  ? Number(process.env.CALLBACK_PORT)
+  : null;
 const CALLBACK_SECRET = process.env.CALLBACK_SECRET || "";
 
 function startCallbackServer(bot) {
@@ -226,7 +228,9 @@ async function pollJobUntilDone(bot, jobId, runId) {
 // ─── Bot ─────────────────────────────────────────────────────────────────────
 const isSetup = process.argv.includes("--setup");
 if (isSetup) {
-  console.log(chalk.bold("setup mode: run scripts/v1/index.js --setup instead"));
+  console.log(
+    chalk.bold("setup mode: run scripts/v1/index.js --setup instead"),
+  );
   console.log(
     chalk.gray(
       "The new coordinator bot does not need gramjs. Setup is only needed for the GitHub Actions worker.",
@@ -248,8 +252,108 @@ bot.use(async (ctx, next) => {
 
 bot.command("start", async (ctx) => {
   await ctx.reply(
-    "ZipSender v2 ready\n\nSend a Google Drive ZIP or video link.\nDownload & upload runs on GitHub Actions — your server just coordinates.\n\nCommands:\n/jobs — show active jobs\n/cancel — cancel latest job",
+    "ZipSender v2 ready\n\nSend a Google Drive ZIP or video link.\nDownload & upload runs on GitHub Actions — your server just coordinates.\n\nCommands:\n/debug — test GitHub connection\n/jobs — show active jobs\n/cancel — cancel latest job",
   );
+});
+
+bot.command("debug", async (ctx) => {
+  const lines = [];
+
+  // 1. Check env vars
+  const missing = [];
+  if (!GH_TOKEN) missing.push("GITHUB_TOKEN");
+  if (!GH_OWNER) missing.push("GITHUB_OWNER");
+  if (!GH_REPO) missing.push("GITHUB_REPO");
+  if (missing.length) {
+    await ctx.reply(`✗ missing env vars: ${missing.join(", ")}`);
+    return;
+  }
+  lines.push(`✓ env vars present`);
+  lines.push(`  owner: ${GH_OWNER}`);
+  lines.push(`  repo:  ${GH_REPO}`);
+  lines.push(`  branch: ${GH_BRANCH}`);
+  lines.push(`  token: ${GH_TOKEN.slice(0, 10)}...`);
+
+  const msg = await ctx.reply(lines.join("\n") + "\n\nchecking GitHub API...");
+  const edit = (text) =>
+    ctx.telegram
+      .editMessageText(ctx.chat.id, msg.message_id, null, text)
+      .catch(() => {});
+
+  // 2. Check repo exists and token works
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}`,
+      { headers: githubHeaders() },
+    );
+    const data = await r.json();
+    if (r.status === 404) {
+      lines.push(`✗ repo not found — check GITHUB_OWNER and GITHUB_REPO`);
+      await edit(lines.join("\n"));
+      return;
+    }
+    if (r.status === 401 || r.status === 403) {
+      lines.push(
+        `✗ token rejected (${r.status}) — check GITHUB_TOKEN and its permissions`,
+      );
+      await edit(lines.join("\n"));
+      return;
+    }
+    lines.push(
+      `✓ repo found: ${data.full_name} (${data.private ? "private" : "public"})`,
+    );
+  } catch (e) {
+    lines.push(`✗ GitHub API unreachable: ${e.message}`);
+    await edit(lines.join("\n"));
+    return;
+  }
+
+  // 3. Check workflow file exists
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows`,
+      { headers: githubHeaders() },
+    );
+    const data = await r.json();
+    const workflows = data.workflows || [];
+    const found = workflows.find(
+      (w) => w.path === `.github/workflows/${WORKFLOW}`,
+    );
+    if (!found) {
+      const names = workflows.map((w) => w.path).join(", ") || "none";
+      lines.push(`✗ workflow not found: .github/workflows/${WORKFLOW}`);
+      lines.push(`  workflows in repo: ${names}`);
+      lines.push(`  → push the worker.yml file to your repo and try again`);
+    } else {
+      lines.push(`✓ workflow found: ${found.name} (state: ${found.state})`);
+      if (found.state !== "active") {
+        lines.push(
+          `  ⚠ workflow state is "${found.state}" — it may need to be enabled in GitHub UI`,
+        );
+      }
+    }
+  } catch (e) {
+    lines.push(`✗ could not list workflows: ${e.message}`);
+  }
+
+  // 4. Check branch exists
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/branches/${GH_BRANCH}`,
+      { headers: githubHeaders() },
+    );
+    if (r.status === 404) {
+      lines.push(
+        `✗ branch "${GH_BRANCH}" not found — check GITHUB_BRANCH in .env`,
+      );
+    } else {
+      lines.push(`✓ branch "${GH_BRANCH}" exists`);
+    }
+  } catch (e) {
+    lines.push(`✗ could not check branch: ${e.message}`);
+  }
+
+  await edit(lines.join("\n"));
 });
 
 bot.command("jobs", async (ctx) => {
@@ -311,10 +415,10 @@ bot.on(message("text"), async (ctx) => {
 
   // Inputs passed into the workflow
   const inputs = {
-    job_id:       jobId,
-    file_id:      fileId,
-    chat_id:      chatId,
-    callback_url: process.env.CALLBACK_URL || "",   // e.g. https://yourserver.com/callback
+    job_id: jobId,
+    file_id: fileId,
+    chat_id: chatId,
+    callback_url: process.env.CALLBACK_URL || "", // e.g. https://yourserver.com/callback
     callback_secret: CALLBACK_SECRET,
     aunt_username: process.env.AUNT_USERNAME,
   };
@@ -363,5 +467,5 @@ startCallbackServer(bot);
 console.log(chalk.bold("starting coordinator bot"));
 bot.launch();
 
-process.once("SIGINT",  () => bot.stop("SIGINT"));
+process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
