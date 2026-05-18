@@ -7,7 +7,6 @@ import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
 
-/* ── agent-first structured logger ─────────────────────────── */
 const DEBUG = process.env.DEBUG === "true";
 const LOG_FILE = ".logs/worker.jsonl";
 
@@ -53,7 +52,6 @@ function redactToken(tok) {
   return tok.slice(0, 6) + "****";
 }
 
-/* ── startup snapshot ──────────────────────────────────────── */
 debugLog("INFO", "worker:startup", "worker starting", {
   node: process.version,
   platform: process.platform,

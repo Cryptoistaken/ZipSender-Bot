@@ -15,7 +15,7 @@ const LOG_FILE = ".logs/coordinator.jsonl";
 
 const jobs = new Map();
 
-/* ── agent-first structured logger ─────────────────────────── */
+
 function ensureLogDir() {
   try {
     fs.mkdirSync(".logs", { recursive: true });
@@ -80,7 +80,7 @@ function redactToken(token) {
   return token.slice(0, 8) + "****";
 }
 
-/* ── startup snapshot ──────────────────────────────────────── */
+
 debugLog("INFO", "coordinator:startup", "coordinator starting", {
   version: process.env.npm_package_version || "2.0.0",
   node: process.version,
@@ -459,7 +459,7 @@ async function handleDebug(ctx) {
     } else {
       lines.push(`✅ workflow: ${found.name} (state: ${found.state})`);
       if (found.state !== "active") {
-        lines.push(`   ⚠️ state is "${found.state}" — enable it in GitHub UI`);
+        lines.push(`   state is "${found.state}" — enable it in GitHub UI`);
       }
     }
   } catch (e) {
@@ -513,7 +513,7 @@ async function handleJobs(ctx) {
             ? w.conclusion === "success"
               ? "✅"
               : "❌"
-            : "⏳";
+            : "...";
         const ageMin = Math.floor(
           (Date.now() - new Date(w.created_at)) / 60000,
         );
@@ -522,7 +522,7 @@ async function handleJobs(ctx) {
       parts.push(`GitHub  ${runs.length}:\n${runLines.join("\n")}`);
     }
   } catch (e) {
-    parts.push(`⚠️ GitHub fetch failed: ${e.message}`);
+    parts.push(`GitHub fetch failed: ${e.message}`);
   }
 
   if (parts.length === 0) {
@@ -536,7 +536,7 @@ async function handleJobs(ctx) {
 async function handleCancel(ctx) {
   const chatId = String(ctx.chat.id);
 
-  // Try local Map first
+
   const filtered = [...jobs.entries()].filter(([, j]) => j.chatId === chatId);
   const jobEntry = filtered.length ? filtered[filtered.length - 1] : null;
 
@@ -548,7 +548,7 @@ async function handleCancel(ctx) {
         { method: "POST", headers: githubHeaders() },
       );
     } catch (e) {
-      await ctx.reply(`⚠️ Cancel API failed: ${e.message}`, mainKeyboard);
+      await ctx.reply(`Cancel API failed: ${e.message}`, mainKeyboard);
     }
     jobs.delete(jobId);
     await ctx.reply(
@@ -558,7 +558,7 @@ async function handleCancel(ctx) {
     return;
   }
 
-  // Fallback: cancel latest non-completed GitHub run
+
   try {
     const r = await fetch(
       `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${WORKFLOW}/runs?per_page=5`,
