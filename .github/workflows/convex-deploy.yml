@@ -3,7 +3,7 @@ name: Deploy Convex
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - "convex/**"
       - "package.json"
