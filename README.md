@@ -12,6 +12,7 @@ All heavy work runs on GitHub Actions free runners.
 ```
 .github/
   workflows/worker.yml          - GitHub Actions workflow (uses Bun)
+  workflows/convex-deploy.yml   - Auto-deploy Convex + register webhook on push
   scripts/worker.js             - Worker that runs inside the Action
 convex/
   schema.js                     - Database schema (jobs table)
@@ -50,7 +51,7 @@ This will:
 - Give you a deployment URL like `https://happy-animal-123.convex.cloud`
 - Give you a site URL like `https://happy-animal-123.convex.site`
 
-Copy both URLs.
+Copy both URLs from the dashboard or from `.env.local`.
 
 ### 4. Set Convex environment variables
 
@@ -61,7 +62,7 @@ npx convex env set AUNT_USERNAME    "recipient-user-id"
 npx convex env set GITHUB_TOKEN     "github_pat_..."
 npx convex env set GITHUB_OWNER     "your-github-username"
 npx convex env set GITHUB_REPO      "your-repo-name"
-npx convex env set GITHUB_BRANCH    "main"
+npx convex env set GITHUB_BRANCH    "master"
 npx convex env set CALLBACK_SECRET  "any-random-string"
 npx convex env set CONVEX_SITE_URL  "https://happy-animal-123.convex.site"
 ```
@@ -98,12 +99,15 @@ Go to your **repo - Settings - Secrets and variables - Actions - New repository 
 | `BOT_TOKEN`         | your Telegram bot token                               |
 | `GROQ_API_KEY`      | from https://console.groq.com                         |
 | `CALLBACK_SECRET`   | same value you set in Convex env vars (step 4)        |
+| `CONVEX_DEPLOY_KEY` | from Convex dashboard - Settings - Deploy Key          |
+| `CONVEX_SITE_URL`   | your `.convex.site` URL from dashboard                 |
+| `GROQ_API_KEY`      | from https://console.groq.com                          |
 
-### 7. Deploy Convex to production
+### 7. Auto-deploy (optional)
 
-```bash
-npx convex dev
-```
+Push to `master` triggers `.github/workflows/convex-deploy.yml`, which deploys Convex and re-registers the Telegram webhook automatically.
+
+Requires GitHub secret `CONVEX_DEPLOY_KEY` (production deploy key from the Convex dashboard). If you only have a dev key, skip this and run `npx convex dev` manually.
 
 Done. No server to run. The bot is live.
 
