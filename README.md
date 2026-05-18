@@ -1,17 +1,16 @@
-# ZipSender v2
+# ZipSender
 
 Google Drive → GitHub Actions → Telegram
 
-Your 250MB server runs only the Telegram bot coordinator.  
-All heavy work (download, extract, upload) runs on GitHub Actions free runners (2 CPU, 14GB RAM, fast internet).
+Your lightweight server runs only the Telegram bot coordinator.  
+All heavy work runs on GitHub Actions free runners.
 
 ---
 
 ## File structure
 
 ```
-index.js                        ← NEW: coordinator bot (runs on your server)
-scripts/v1/index.js             ← ORIGINAL: all-in-one bot (kept for reference)
+index.js                        ← Telegram coordinator bot
 .github/
   workflows/worker.yml          ← GitHub Actions workflow
   scripts/worker.js             ← Worker that runs inside the Action
@@ -24,30 +23,30 @@ package.json
 ## Setup
 
 ### 1. GitHub repo
-Create a GitHub repo (can be private) and push this code.
+Create a GitHub repo and push this code.
 
 ### 2. GitHub PAT
-Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**  
+Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+
 Create a token with:
 - **Repository access**: your repo only
 - **Permissions**:
-  - `Actions` → Read & Write (to trigger workflows and read run status)
-  - `Contents` → Read (to checkout code in the runner)
+  - `Actions` → Read & Write
 
 Copy the token.
 
 ### 3. GitHub repo secrets
 Go to your **repo → Settings → Secrets and variables → Actions → New repository secret**
 
-Add these secrets (the runner reads them):
+Add these secrets:
 
-| Secret name        | Value                                      |
-|--------------------|--------------------------------------------|
-| `TELEGRAM_API_ID`  | from https://my.telegram.org               |
-| `TELEGRAM_API_HASH`| from https://my.telegram.org               |
-| `TELEGRAM_SESSION` | run `npm run setup:v1` locally, copy output|
-| `BOT_TOKEN`        | your Telegram bot token                    |
-| `GROQ_API_KEY`     | from https://console.groq.com              |
+| Secret name         | Value                                          |
+|---------------------|------------------------------------------------|
+| `TELEGRAM_API_ID`   | from https://my.telegram.org                   |
+| `TELEGRAM_API_HASH` | from https://my.telegram.org                   |
+| `TELEGRAM_SESSION`  | run `node scripts/gramjs-setup.js`, copy output |
+| `BOT_TOKEN`         | your Telegram bot token                        |
+| `GROQ_API_KEY`      | from https://console.groq.com                  |
 
 ### 4. Your server .env
 Copy `.env.example` to `.env` and fill in:
@@ -62,8 +61,6 @@ GITHUB_OWNER=yourusername
 GITHUB_REPO=zipsender
 GITHUB_BRANCH=main
 
-# Leave CALLBACK_URL empty if your server has no public URL
-# The bot will poll GitHub every 15s instead
 CALLBACK_URL=
 CALLBACK_PORT=
 CALLBACK_SECRET=
@@ -80,17 +77,17 @@ npm start
 ## How it works
 
 ```
-You → send GDrive link to bot
+You → send GDrive link to bot (supports multiple links in one message)
 Bot → calls GitHub API to trigger worker.yml
-      (passes file_id, chat_id, job_id as inputs)
+      (passes file_ids, chat_id, job_id as inputs)
 
 GitHub Actions runner:
   1. npm install
-  2. Downloads file from GDrive (fast — GitHub has great bandwidth)
-  3. Extracts ZIP if needed (14GB workspace — no size worries)
+  2. Downloads files from GDrive in parallel
+  3. Extracts ZIPs if needed
   4. AI renames files via Groq
   5. Uploads each video to Telegram via gramjs
-  6. Calls your server /callback OR sends Telegram message directly
+  6. Reports completion back to bot
 
 Your server: updates the Telegram status message
 ```
@@ -99,11 +96,15 @@ Your server: updates the Telegram status message
 
 ## Commands
 
-| Command   | What it does                        |
-|-----------|-------------------------------------|
-| `/start`  | Show welcome message                |
-| `/jobs`   | List active GitHub Actions jobs     |
-| `/cancel` | Cancel your latest running job      |
+Inline keyboard buttons:
+
+| Button        | What it does                              |
+|---------------|-------------------------------------------|
+| Run Debug     | Check all env vars and GitHub connectivity|
+| Active Jobs   | List local and GitHub Actions jobs        |
+| Cancel Latest | Cancel the most recent running job        |
+
+Send a Google Drive link to start processing.
 
 ---
 
@@ -111,13 +112,5 @@ Your server: updates the Telegram status message
 - 2,000 minutes/month (free for public repos: unlimited)
 - 6-hour max per job
 - 14GB disk on runner
-- No concurrent job limit per se, but your bot enforces 1 job per user
 
-For high volume: make the repo **public** (Actions minutes are free on public repos). The secrets are still private — only the workflow YAML is public.
-
----
-
-## Keeping v1
-The original bot is at `scripts/v1/index.js`.  
-Run it with: `npm run start:v1`  
-Get a session string: `npm run setup:v1`
+For high volume: make the repo **public**. Secrets stay private.
