@@ -1,9 +1,6 @@
 # ZipSender Bot
 
-Google Drive - GitHub Actions - Telegram
-
-No server required. The bot runs on Convex (free, serverless).  
-All heavy work runs on GitHub Actions free runners.
+Google Drive to Telegram via GitHub Actions. Serverless backend on Convex.
 
 ---
 
@@ -11,20 +8,23 @@ All heavy work runs on GitHub Actions free runners.
 
 ```
 .github/
-  workflows/worker.yml          - GitHub Actions workflow (uses Bun)
-  workflows/convex-deploy.yml   - Auto-deploy Convex + register webhook on push
-  scripts/worker.js             - Worker that runs inside the Action
+  workflows/
+    worker.yml          Download, extract, rename, upload
+    convex-deploy.yml   Auto-deploy Convex + sync env vars + register webhook
+  scripts/
+    worker.js           Worker script that runs inside the Action
 convex/
-  schema.js                     - Database schema (jobs table)
-  http.js                       - Telegram webhook + worker callback receiver
-  jobs.js                       - Job DB mutations/queries
-  github.js                     - GitHub API actions
-  telegram.js                   - Telegram send/edit actions
-  webhook_setup.js              - One-shot webhook registration
+  schema.js             Database schema
+  http.js               Telegram webhook + worker callback
+  jobs.js               Job DB mutations and queries
+  github.js             GitHub API actions
+  telegram.js           Telegram send and edit actions
+  webhook_setup.js      Manual webhook registration helper
 scripts/
-  set-webhook.js                - Local webhook setup script
-  gramjs-setup.js               - GramJS session setup
+  set-webhook.js        Local webhook setup script
+  gramjs-setup.js       GramJS session setup
 package.json
+bun.lockb
 .env.example
 ```
 
@@ -34,10 +34,10 @@ package.json
 
 ### 1. Create a GitHub repo and push this code
 
-### 2. Install dependencies
+### 2. Install dependencies locally
 
 ```bash
-npm install
+bun install
 ```
 
 ### 3. Set up Convex
@@ -46,107 +46,73 @@ npm install
 npx convex dev
 ```
 
-This will:
-- Create a free Convex project at dashboard.convex.dev
-- Give you a deployment URL like `https://happy-animal-123.convex.cloud`
-- Give you a site URL like `https://happy-animal-123.convex.site`
+This creates a free Convex project. Copy the `.convex.site` URL from the dashboard.
 
-Copy both URLs from the dashboard or from `.env.local`.
+### 4. Set GitHub Actions secrets
 
-### 4. Set Convex environment variables
+Go to **repo Settings - Secrets and variables - Actions - New repository secret**
+
+| Secret name              | Value                                                        |
+|--------------------------|--------------------------------------------------------------|
+| `BOT_TOKEN`              | Telegram bot token                                           |
+| `OWNER_CHAT_ID`          | Your Telegram user ID                                        |
+| `AUNT_USERNAME`          | Telegram recipient user ID                                   |
+| `TELEGRAM_API_ID`        | From https://my.telegram.org                                 |
+| `TELEGRAM_API_HASH`      | From https://my.telegram.org                                 |
+| `TELEGRAM_SESSION`       | Run `bun scripts/gramjs-setup.js`, copy the output           |
+| `GROQ_API_KEY`           | From https://console.groq.com                                |
+| `GH_PAT`                 | GitHub personal access token with repo and actions scopes    |
+| `GH_OWNER`               | Your GitHub username                                         |
+| `GH_REPO`                | This repo name                                               |
+| `GH_BRANCH`              | `master`                                                     |
+| `CALLBACK_SECRET`        | Any random string                                            |
+| `CONVEX_DEPLOY_KEY`      | From Convex dashboard - Settings - Deploy Key                |
+| `CONVEX_SITE_URL`        | Your `.convex.site` URL from the dashboard                   |
+
+### 5. Deploy and auto-sync
+
+Push to `master` or run the `Deploy Convex` workflow manually. This deploys the Convex backend, syncs all secrets above to Convex environment variables, and registers the Telegram webhook automatically.
 
 ```bash
-npx convex env set BOT_TOKEN        "your-bot-token"
-npx convex env set OWNER_CHAT_ID    "your-telegram-user-id"
-npx convex env set AUNT_USERNAME    "recipient-user-id"
-npx convex env set GITHUB_TOKEN     "github_pat_..."
-npx convex env set GITHUB_OWNER     "your-github-username"
-npx convex env set GITHUB_REPO      "your-repo-name"
-npx convex env set GITHUB_BRANCH    "master"
-npx convex env set CALLBACK_SECRET  "any-random-string"
-npx convex env set CONVEX_SITE_URL  "https://happy-animal-123.convex.site"
+git push origin master
 ```
 
-### 5. Register the Telegram webhook
-
-Option A - via Convex (recommended):
-```bash
-npx convex run webhook_setup:registerWebhook
-```
-
-Option B - via local script:
-```bash
-cp .env.example .env
-# Fill in BOT_TOKEN and CONVEX_SITE_URL
-node scripts/set-webhook.js
-```
-
-You should see:
-```
-Webhook set successfully
-Telegram confirms webhook URL: https://happy-animal-123.convex.site/telegram-webhook
-```
-
-### 6. Set GitHub Actions secrets
-
-Go to your **repo - Settings - Secrets and variables - Actions - New repository secret**
-
-| Secret name         | Value                                                 |
-|---------------------|-------------------------------------------------------|
-| `TELEGRAM_API_ID`   | from https://my.telegram.org                          |
-| `TELEGRAM_API_HASH` | from https://my.telegram.org                          |
-| `TELEGRAM_SESSION`  | run `node scripts/gramjs-setup.js`, copy output       |
-| `BOT_TOKEN`         | your Telegram bot token                               |
-| `GROQ_API_KEY`      | from https://console.groq.com                         |
-| `CALLBACK_SECRET`   | same value you set in Convex env vars (step 4)        |
-| `CONVEX_DEPLOY_KEY` | from Convex dashboard - Settings - Deploy Key          |
-| `CONVEX_SITE_URL`   | your `.convex.site` URL from dashboard                 |
-| `GROQ_API_KEY`      | from https://console.groq.com                          |
-
-### 7. Auto-deploy (optional)
-
-Push to `master` triggers `.github/workflows/convex-deploy.yml`, which deploys Convex and re-registers the Telegram webhook automatically.
-
-Requires GitHub secret `CONVEX_DEPLOY_KEY` (production deploy key from the Convex dashboard). If you only have a dev key, skip this and run `npx convex dev` manually.
-
-Done. No server to run. The bot is live.
+Verify in the Actions tab that the deploy succeeded. The webhook registration step will confirm the URL.
 
 ---
 
 ## How it works
 
 ```
-You - send GDrive link to Telegram bot
+You - send Google Drive link to Telegram bot
 Telegram - POST to https://your-app.convex.site/telegram-webhook
 Convex HTTP action:
   - saves job to Convex DB
-  - calls GitHub API to trigger worker.yml
-  - edits Telegram message with run URL
+  - triggers GitHub Actions worker.yml via API
+  - sends run URL back to Telegram chat
 
 GitHub Actions runner:
-  1. bun install  (~10 seconds vs 3-5 min with npm)
+  1. bun install
   2. Downloads files from GDrive in parallel
   3. Extracts ZIPs if needed
   4. AI renames files via Groq
-  5. Uploads each video to Telegram via gramjs (workers: 15)
-  6. POSTs progress/done/error to https://your-app.convex.site/worker-callback
+  5. Uploads videos to Telegram via GramJS in parallel (workers: 15 each)
+  6. POSTs progress, done, or error to Convex callback URL
 
-Convex worker-callback action:
-  - updates the Telegram status message in real-time
-  - marks job done/error in DB
+Convex callback action:
+  - updates the Telegram status message in real time
+  - marks job done or error in DB
 ```
 
 ---
 
 ## Commands
 
-Send any Google Drive link to start processing (supports multiple links in one message).
-
-Inline keyboard buttons:
+Send any Google Drive link to start processing. Multiple links in one message are supported.
 
 | Button        | What it does                               |
 |---------------|--------------------------------------------|
-| Run Debug     | Check all env vars and GitHub connectivity |
+| Run Debug     | Check env vars and GitHub connectivity     |
 | Active Jobs   | List local DB jobs and recent GitHub runs  |
 | Cancel Latest | Cancel the most recent running job         |
 
@@ -154,17 +120,18 @@ Inline keyboard buttons:
 
 ## Limits (GitHub free tier)
 
-- 2,000 minutes/month (free for public repos: unlimited)
-- 6-hour max per job
-- 14GB disk on runner
+- 2 000 minutes per month (unlimited for public repos)
+- 6 hour max per job
+- 14 GB disk on runner
 
-For high volume: make the repo **public**. Secrets stay private.
+For high volume: make the repo public. GitHub secrets stay private.
 
 ---
 
 ## Convex limits (free tier)
 
-- 1M function calls/month
+- 1M function calls per month
 - 1 GB database storage
 - 1 GB file storage
-- More than enough for personal use
+
+More than enough for personal use.
