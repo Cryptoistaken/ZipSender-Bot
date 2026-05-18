@@ -192,7 +192,7 @@ function contentTypeToExt(contentType) {
   return map[ct] || null;
 }
 
-async function downloadFile(fileId, destPath, quiet = false) {
+async function downloadFile(fileId, destPath, onProgress) {
   logDebug("downloadFile:entry", "starting download", { fileId, destPath });
   const url = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
 
@@ -217,7 +217,7 @@ async function downloadFile(fileId, destPath, quiet = false) {
   let lastReported = 0;
   const startTime = Date.now();
 
-  response.data.on("data", async (chunk) => {
+  response.data.on("data", (chunk) => {
     downloaded += chunk.length;
     const pct = total ? Math.floor((downloaded / total) * 100) : 0;
     if (pct - lastReported >= 10) {
@@ -229,7 +229,7 @@ async function downloadFile(fileId, destPath, quiet = false) {
         ? `Downloading\n${bar} ${pct}%\n${formatBytes(downloaded)} / ${formatBytes(total)}  |  ${formatSpeed(speed)}`
         : `Downloading\n${formatBytes(downloaded)} downloaded  |  ${formatSpeed(speed)}`;
       console.log(msg.replace(/\n/g, "  "));
-      if (!quiet) await callback("progress", msg);
+      if (onProgress) onProgress(pct, downloaded, total, speed);
     }
   });
 
@@ -418,7 +418,7 @@ async function sendVideoToAunt(
           const bar = buildBar(pct);
           const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
           console.log(msg.replace(/\n/g, "  "));
-          if (onProgress) onProgress(pct);
+          if (onProgress) onProgress(pct, uploaded, fileSize, speed);
         }
       },
     });
@@ -455,9 +455,35 @@ async function main() {
     `Found ${FILE_IDS.length} Drive links downloading in parallel`,
   );
 
+  const downloadStates = FILE_IDS.map(() => ({ pct: 0, downloaded: 0, total: 0, speed: 0 }));
+  let lastDownloadReport = 0;
+  let isDownloadingReport = false;
+
+  async function reportDownloads(force = false) {
+    const now = Date.now();
+    if (!force && now - lastDownloadReport < 2000) return;
+    if (isDownloadingReport) return;
+    lastDownloadReport = now;
+    isDownloadingReport = true;
+
+    try {
+      const lines = [`Downloading ${FILE_IDS.length} files`];
+      downloadStates.forEach((s, i) => {
+        const bar = buildBar(s.pct);
+        lines.push(`${i + 1}/${FILE_IDS.length}  ${bar} ${s.pct}%  ${formatBytes(s.downloaded)} / ${formatBytes(s.total)}  ${formatSpeed(s.speed)}`);
+      });
+      await callback("progress", lines.join("\n"));
+    } finally {
+      isDownloadingReport = false;
+    }
+  }
+
   const downloadTasks = FILE_IDS.map((fileId, index) => {
     const tmpPath = `tmp/download_${index}_${Date.now()}.tmp`;
-    return downloadFile(fileId, tmpPath, false).then((result) => ({
+    return downloadFile(fileId, tmpPath, (pct, downloaded, total, speed) => {
+      downloadStates[index] = { pct, downloaded, total, speed };
+      reportDownloads();
+    }).then((result) => ({
       result,
       tmpPath,
       fileId,
@@ -468,6 +494,7 @@ async function main() {
   let downloads;
   try {
     downloads = await Promise.all(downloadTasks);
+    await reportDownloads(true);
     logInfo("main:downloads", `all ${downloads.length} downloads finished`);
   } catch (err) {
     logError("main:downloads", "download batch failed", err);
@@ -541,18 +568,29 @@ async function main() {
     `Starting upload of ${allFiles.length} file(s) to Telegram.`,
   );
 
-  const uploadProgress = new Array(allFiles.length).fill(0);
-  let lastUploadUpdate = 0;
+  const uploadStates = allFiles.map(() => ({ pct: 0, uploaded: 0, total: 0, speed: 0 }));
+  let lastUploadReport = 0;
+  let isUploadingReport = false;
 
-  async function reportUploadProgress(force = false) {
-    const totalPct = uploadProgress.reduce((a, b) => a + b, 0) / allFiles.length;
+  async function reportUploads(force = false) {
     const now = Date.now();
-    if (!force && now - lastUploadUpdate < 3000) return;
-    lastUploadUpdate = now;
-    const completed = uploadProgress.filter(p => p >= 100).length;
-    const bar = buildBar(totalPct);
-    const msg = `Uploading ${completed}/${allFiles.length} files\n${bar} ${Math.round(totalPct)}%`;
-    await callback("progress", msg);
+    if (!force && now - lastUploadReport < 2000) return;
+    if (isUploadingReport) return;
+    lastUploadReport = now;
+    isUploadingReport = true;
+
+    try {
+      const lines = [`Uploading ${allFiles.length} files`];
+      uploadStates.forEach((s, i) => {
+        const bar = buildBar(s.pct);
+        const name = allFiles[i].renamedName;
+        lines.push(`${i + 1}/${allFiles.length}  ${name}`);
+        lines.push(`     ${bar} ${s.pct}%  ${formatBytes(s.uploaded)} / ${formatBytes(s.total)}  ${formatSpeed(s.speed)}`);
+      });
+      await callback("progress", lines.join("\n"));
+    } finally {
+      isUploadingReport = false;
+    }
   }
 
   const uploadTasks = allFiles.map((file, i) =>
@@ -561,9 +599,9 @@ async function main() {
       file.renamedName,
       i + 1,
       allFiles.length,
-      (pct) => {
-        uploadProgress[i] = pct;
-        reportUploadProgress();
+      (pct, uploaded, total, speed) => {
+        uploadStates[i] = { pct, uploaded, total, speed };
+        reportUploads();
       }
     )
       .then(() => {
@@ -579,6 +617,7 @@ async function main() {
   );
 
   await Promise.all(uploadTasks);
+  await reportUploads(true);
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   await callback(
