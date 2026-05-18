@@ -117,6 +117,20 @@ function formatSpeed(bytesPerSec) {
   return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
 }
 
+function formatBytesShort(bytes) {
+  if (bytes >= 1024 * 1024 * 1024)
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)}MB`;
+  return `${(bytes / 1024).toFixed(0)}KB`;
+}
+
+function formatSpeedShort(bytesPerSec) {
+  if (!bytesPerSec) return "0KB/s";
+  if (bytesPerSec > 1024 * 1024)
+    return `${(bytesPerSec / 1024 / 1024).toFixed(1)}MB/s`;
+  return `${(bytesPerSec / 1024).toFixed(1)}KB/s`;
+}
+
 function buildBar(pct, width = 12) {
   const filled = Math.round((pct / 100) * width);
   return "▐" + "█".repeat(filled) + "░".repeat(width - filled) + "▌";
@@ -224,11 +238,6 @@ async function downloadFile(fileId, destPath, onProgress) {
       lastReported = pct;
       const elapsed = (Date.now() - startTime) / 1000 || 0.001;
       const speed = downloaded / elapsed;
-      const bar = buildBar(pct);
-      const msg = total
-        ? `Downloading\n${bar} ${pct}%\n${formatBytes(downloaded)} / ${formatBytes(total)}  |  ${formatSpeed(speed)}`
-        : `Downloading\n${formatBytes(downloaded)} downloaded  |  ${formatSpeed(speed)}`;
-      console.log(msg.replace(/\n/g, "  "));
       if (onProgress) onProgress(pct, downloaded, total, speed);
     }
   });
@@ -375,6 +384,7 @@ async function sendVideoToAunt(
   fileIndex,
   total,
   onProgress,
+  sharedClient,
 ) {
   logDebug("sendVideoToAunt:entry", `sending file ${fileIndex}/${total}`, {
     renamedName,
@@ -394,14 +404,14 @@ async function sendVideoToAunt(
 
   const silentLogger = new Logger("none");
   const session = new StringSession(TELEGRAM_SESSION);
-  const client = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+  const client = sharedClient || new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
     connectionRetries: 5,
     useWSS: true,
     retryDelay: 1000,
     baseLogger: silentLogger,
   });
 
-  await client.connect();
+  if (!sharedClient) await client.connect();
 
   try {
     await client.sendFile(AUNT_USERNAME, {
@@ -415,9 +425,6 @@ async function sendVideoToAunt(
           const elapsed = (Date.now() - startTime) / 1000 || 0.001;
           const speed = (progress * fileSize) / elapsed;
           const uploaded = progress * fileSize;
-          const bar = buildBar(pct);
-          const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
-          console.log(msg.replace(/\n/g, "  "));
           if (onProgress) onProgress(pct, uploaded, fileSize, speed);
         }
       },
@@ -429,8 +436,10 @@ async function sendVideoToAunt(
       size: fileSize,
     });
   } finally {
-    await client.disconnect();
-    await client.destroy();
+    if (!sharedClient) {
+      await client.disconnect();
+      await client.destroy();
+    }
   }
 }
 
@@ -450,10 +459,7 @@ async function main() {
 
   fs.mkdirSync("tmp", { recursive: true });
 
-  await callback(
-    "progress",
-    `Found ${FILE_IDS.length} Drive links downloading in parallel`,
-  );
+  await callback("progress", `DL ${FILE_IDS.length}`);
 
   const downloadStates = FILE_IDS.map(() => ({ pct: 0, downloaded: 0, total: 0, speed: 0 }));
   let lastDownloadReport = 0;
@@ -467,10 +473,13 @@ async function main() {
     isDownloadingReport = true;
 
     try {
-      const lines = [`Downloading ${FILE_IDS.length} files`];
+      const lines = [`DL ${FILE_IDS.length}`];
       downloadStates.forEach((s, i) => {
         const bar = buildBar(s.pct);
-        lines.push(`${i + 1}/${FILE_IDS.length}  ${bar} ${s.pct}%  ${formatBytes(s.downloaded)} / ${formatBytes(s.total)}  ${formatSpeed(s.speed)}`);
+        const spec = s.total > 0
+          ? `${s.pct}% ${formatBytesShort(s.downloaded)}/${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
+          : `${formatBytesShort(s.downloaded)} ${formatSpeedShort(s.speed)}`;
+        lines.push(`${i + 1}/${FILE_IDS.length} ${bar} ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
@@ -547,10 +556,7 @@ async function main() {
     process.exit(1);
   }
 
-  await callback(
-    "progress",
-    `Found ${allFiles.length} files total running AI rename.`,
-  );
+  await callback("progress", `Renaming ${allFiles.length}`);
 
   try {
     const originalNames = allFiles.map((f) => f.originalName);
@@ -563,12 +569,9 @@ async function main() {
     console.log("groq error, using original names:", err.message);
   }
 
-  await callback(
-    "progress",
-    `Starting upload of ${allFiles.length} file(s) to Telegram.`,
-  );
+  await callback("progress", `UL ${allFiles.length}`);
 
-  const uploadStates = allFiles.map(() => ({ pct: 0, uploaded: 0, total: 0, speed: 0 }));
+  const uploadStates = allFiles.map((f) => ({ pct: 0, uploaded: 0, total: f.size, speed: 0 }));
   let lastUploadReport = 0;
   let isUploadingReport = false;
 
@@ -580,12 +583,14 @@ async function main() {
     isUploadingReport = true;
 
     try {
-      const lines = [`Uploading ${allFiles.length} files`];
+      const lines = [`UL ${allFiles.length}`];
       uploadStates.forEach((s, i) => {
         const bar = buildBar(s.pct);
         const name = allFiles[i].renamedName;
-        lines.push(`${i + 1}/${allFiles.length}  ${name}`);
-        lines.push(`     ${bar} ${s.pct}%  ${formatBytes(s.uploaded)} / ${formatBytes(s.total)}  ${formatSpeed(s.speed)}`);
+        const spec = s.total > 0
+          ? `${s.pct}% ${formatBytesShort(s.uploaded)}/${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
+          : `${formatBytesShort(s.uploaded)} ${formatSpeedShort(s.speed)}`;
+        lines.push(`${i + 1}/${allFiles.length} ${bar} ${spec}  ${name}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
@@ -593,37 +598,47 @@ async function main() {
     }
   }
 
-  const uploadTasks = allFiles.map((file, i) =>
-    sendVideoToAunt(
-      file.fullPath,
-      file.renamedName,
-      i + 1,
-      allFiles.length,
-      (pct, uploaded, total, speed) => {
-        uploadStates[i] = { pct, uploaded, total, speed };
-        reportUploads();
-      }
-    )
-      .then(() => {
-        fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
-      })
-      .catch(async (err) => {
-        logError("main:upload", `upload failed for ${file.renamedName}`, err, {
-          fullPath: file.fullPath,
-          index: i + 1,
-        });
-        await callback("progress", `Failed to send ${file.renamedName}: ${err.message}`);
-      })
-  );
+  const silentLogger = new Logger("none");
+  const session = new StringSession(TELEGRAM_SESSION);
+  const uploadClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+    connectionRetries: 5,
+    useWSS: true,
+    retryDelay: 1000,
+    baseLogger: silentLogger,
+  });
+  await uploadClient.connect();
 
-  await Promise.all(uploadTasks);
+  for (let i = 0; i < allFiles.length; i++) {
+    const file = allFiles[i];
+    try {
+      await sendVideoToAunt(
+        file.fullPath,
+        file.renamedName,
+        i + 1,
+        allFiles.length,
+        (pct, uploaded, total, speed) => {
+          uploadStates[i] = { pct, uploaded, total, speed };
+          reportUploads();
+        },
+        uploadClient,
+      );
+      fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
+    } catch (err) {
+      logError("main:upload", `upload failed for ${file.renamedName}`, err, {
+        fullPath: file.fullPath,
+        index: i + 1,
+      });
+      await callback("progress", `Failed ${file.renamedName}: ${err.message}`);
+    }
+  }
+
+  await uploadClient.disconnect();
+  await uploadClient.destroy();
   await reportUploads(true);
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
-  await callback(
-    "done",
-    `Done ${allFiles.length} file(s) sent\nTotal: ${formatBytes(totalSize)}\n${allFiles.map((f) => `  ${f.renamedName}`).join("\n")}`,
-  );
+  const ok = allFiles.map((f) => `  ${f.renamedName}`).join("\n");
+  await callback("done", `Done ${allFiles.length}  ${formatBytesShort(totalSize)}\n${ok}`);
 }
 
 main().catch(async (err) => {

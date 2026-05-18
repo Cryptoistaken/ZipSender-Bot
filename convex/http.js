@@ -190,7 +190,7 @@ http.route({
     await ctx.runAction(internal.telegram.editMessage, {
       chatId,
       msgId: statusMsgId,
-      text: `Worker started\n\nRun: ${runsUrl}\n\nThis message will update as the job progresses.`,
+      text: "Running...",
     });
 
     return new Response("ok", { status: 200 });
