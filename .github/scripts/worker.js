@@ -459,7 +459,7 @@ async function main() {
 
   fs.mkdirSync("tmp", { recursive: true });
 
-  await callback("progress", `DL ${FILE_IDS.length}`);
+  await callback("progress", "Downloading");
 
   const downloadStates = FILE_IDS.map(() => ({ pct: 0, downloaded: 0, total: 0, speed: 0 }));
   let lastDownloadReport = 0;
@@ -474,12 +474,12 @@ async function main() {
 
     try {
       const lines = [];
-      downloadStates.forEach((s, i) => {
+      downloadStates.forEach((s) => {
         const bar = buildBar(s.pct);
         const spec = s.total > 0
-          ? `${s.pct}% ${formatBytesShort(s.downloaded)}|${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
+          ? `${s.pct}% ${formatBytesShort(s.downloaded)}→${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
           : `${formatBytesShort(s.downloaded)} ${formatSpeedShort(s.speed)}`;
-        lines.push(`${i + 1}|${FILE_IDS.length} ${bar} ${spec}`);
+        lines.push(`${bar} ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
@@ -582,12 +582,12 @@ async function main() {
 
     try {
       const lines = [];
-      uploadStates.forEach((s, i) => {
+      uploadStates.forEach((s) => {
         const bar = buildBar(s.pct);
         const spec = s.total > 0
-          ? `${s.pct}% ${formatBytesShort(s.uploaded)}|${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
+          ? `${s.pct}% ${formatBytesShort(s.uploaded)}→${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
           : `${formatBytesShort(s.uploaded)} ${formatSpeedShort(s.speed)}`;
-        lines.push(`${i + 1}|${allFiles.length} ${bar} ${spec}`);
+        lines.push(`${bar} ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
