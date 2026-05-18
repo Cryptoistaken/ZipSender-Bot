@@ -477,9 +477,9 @@ async function main() {
       downloadStates.forEach((s) => {
         const bar = buildBar(s.pct);
         const spec = s.total > 0
-          ? `${s.pct}% ${formatBytesShort(s.downloaded)}→${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
-          : `${formatBytesShort(s.downloaded)} ${formatSpeedShort(s.speed)}`;
-        lines.push(`${bar} ${spec}`);
+          ? `${s.pct}%  ${formatBytesShort(s.downloaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
+          : `${formatBytesShort(s.downloaded)}  ${formatSpeedShort(s.speed)}`;
+        lines.push(`${bar}  ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
@@ -585,9 +585,9 @@ async function main() {
       uploadStates.forEach((s) => {
         const bar = buildBar(s.pct);
         const spec = s.total > 0
-          ? `${s.pct}% ${formatBytesShort(s.uploaded)}→${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
-          : `${formatBytesShort(s.uploaded)} ${formatSpeedShort(s.speed)}`;
-        lines.push(`${bar} ${spec}`);
+          ? `${s.pct}%  ${formatBytesShort(s.uploaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
+          : `${formatBytesShort(s.uploaded)}  ${formatSpeedShort(s.speed)}`;
+        lines.push(`${bar}  ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
