@@ -369,22 +369,6 @@ Return only a JSON array of the cleaned names in the same order. No markdown, no
   }
 }
 
-let gramClient = null;
-
-async function initGramClient() {
-  logDebug("initGramClient:entry", "connecting to Telegram");
-  const silentLogger = new Logger("none");
-  const session = new StringSession(TELEGRAM_SESSION);
-  gramClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
-    connectionRetries: 10,
-    useWSS: true,
-    retryDelay: 2000,
-    baseLogger: silentLogger,
-  });
-  await gramClient.connect();
-  logInfo("initGramClient:done", "GramJS connected");
-}
-
 async function sendVideoToAunt(
   filePath,
   renamedName,
@@ -408,30 +392,46 @@ async function sendVideoToAunt(
   const startTime = Date.now();
   let lastPct = -1;
 
-  await gramClient.sendFile(AUNT_USERNAME, {
-    file: renamedPath,
-    forceDocument: true,
-    workers: 15,
-    progressCallback: async (progress) => {
-      const pct = Math.floor(progress * 100);
-      if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
-        lastPct = pct;
-        const elapsed = (Date.now() - startTime) / 1000 || 0.001;
-        const speed = (progress * fileSize) / elapsed;
-        const uploaded = progress * fileSize;
-        const bar = buildBar(pct);
-        const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
-        console.log(msg.replace(/\n/g, "  "));
-        if (onProgress) onProgress(pct);
-      }
-    },
+  const silentLogger = new Logger("none");
+  const session = new StringSession(TELEGRAM_SESSION);
+  const client = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+    connectionRetries: 5,
+    useWSS: true,
+    retryDelay: 1000,
+    baseLogger: silentLogger,
   });
-  logInfo("sendVideoToAunt:done", `file sent`, {
-    renamedName,
-    fileIndex,
-    total,
-    size: fileSize,
-  });
+
+  await client.connect();
+
+  try {
+    await client.sendFile(AUNT_USERNAME, {
+      file: renamedPath,
+      forceDocument: true,
+      workers: 15,
+      progressCallback: async (progress) => {
+        const pct = Math.floor(progress * 100);
+        if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
+          lastPct = pct;
+          const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+          const speed = (progress * fileSize) / elapsed;
+          const uploaded = progress * fileSize;
+          const bar = buildBar(pct);
+          const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
+          console.log(msg.replace(/\n/g, "  "));
+          if (onProgress) onProgress(pct);
+        }
+      },
+    });
+    logInfo("sendVideoToAunt:done", `file sent`, {
+      renamedName,
+      fileIndex,
+      total,
+      size: fileSize,
+    });
+  } finally {
+    await client.disconnect();
+    await client.destroy();
+  }
 }
 
 async function main() {
@@ -541,13 +541,6 @@ async function main() {
     `Starting upload of ${allFiles.length} file(s) to Telegram.`,
   );
 
-  try {
-    await initGramClient();
-  } catch (err) {
-    await callback("error", `Telegram connect failed: ${err.message}`);
-    process.exit(1);
-  }
-
   const uploadProgress = new Array(allFiles.length).fill(0);
   let lastUploadUpdate = 0;
 
@@ -586,8 +579,6 @@ async function main() {
   );
 
   await Promise.all(uploadTasks);
-
-  await gramClient.disconnect();
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   await callback(
