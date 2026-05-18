@@ -1,3 +1,4 @@
 .env
 .env.github
 node_modules
+convex/_generated/

@@ -1,0 +1,59 @@
+name: Deploy Convex
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "convex/**"
+      - "package.json"
+      - ".github/workflows/convex-deploy.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Convex + Register Webhook
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Deploy to Convex
+        run: npx convex deploy --yes
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      - name: Register Telegram webhook
+        run: |
+          WEBHOOK_URL="${CONVEX_SITE_URL}/telegram-webhook"
+          echo "Registering: ${WEBHOOK_URL}"
+
+          RESPONSE=$(curl -s -X POST \
+            "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"url\": \"${WEBHOOK_URL}\",
+              \"allowed_updates\": [\"message\", \"callback_query\"],
+              \"drop_pending_updates\": true
+            }")
+
+          echo "Response: ${RESPONSE}"
+
+          OK=$(echo "${RESPONSE}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ok', False))")
+          if [ "${OK}" != "True" ]; then
+            echo "Webhook registration failed"
+            exit 1
+          fi
+
+          echo "Webhook registered successfully"
+          curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
