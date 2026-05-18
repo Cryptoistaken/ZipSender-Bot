@@ -10,8 +10,92 @@ const GH_OWNER = process.env.GITHUB_OWNER;
 const GH_REPO = process.env.GITHUB_REPO;
 const GH_BRANCH = process.env.GITHUB_BRANCH || "main";
 const WORKFLOW = "worker.yml";
+const DEBUG = process.env.DEBUG === "true";
+const LOG_FILE = ".logs/coordinator.jsonl";
 
 const jobs = new Map();
+
+/* ── agent-first structured logger ─────────────────────────── */
+function ensureLogDir() {
+  try {
+    fs.mkdirSync(".logs", { recursive: true });
+  } catch {}
+}
+
+function debugLog(level, source, message, data = null, err = null) {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    source,
+    msg: message,
+    pid: process.pid,
+  };
+  if (data) entry.data = data;
+  if (err) {
+    entry.error = {
+      message: err.message,
+      stack: err.stack,
+      name: err.name,
+    };
+  }
+  try {
+    ensureLogDir();
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n");
+  } catch (e) {
+    console.error(chalk.red("[LOG_ERR]"), e.message);
+  }
+  if (DEBUG || level === "ERROR" || level === "WARN") {
+    const color =
+      level === "ERROR"
+        ? chalk.red
+        : level === "WARN"
+          ? chalk.yellow
+          : level === "DEBUG"
+            ? chalk.gray
+            : chalk.cyan;
+    console.log(
+      color(`[${level}]`),
+      chalk.dim(source),
+      message,
+      data ? chalk.gray(JSON.stringify(data)) : "",
+    );
+  }
+}
+
+function logInfo(source, msg, data) {
+  debugLog("INFO", source, msg, data);
+}
+function logError(source, msg, err, data) {
+  debugLog("ERROR", source, msg, data, err);
+}
+function logDebug(source, msg, data) {
+  debugLog("DEBUG", source, msg, data);
+}
+function logWarn(source, msg, data) {
+  debugLog("WARN", source, msg, data);
+}
+
+function redactToken(token) {
+  if (!token) return null;
+  return token.slice(0, 8) + "****";
+}
+
+/* ── startup snapshot ──────────────────────────────────────── */
+debugLog("INFO", "coordinator:startup", "coordinator starting", {
+  version: process.env.npm_package_version || "2.0.0",
+  node: process.version,
+  platform: process.platform,
+  env: {
+    GH_OWNER,
+    GH_REPO,
+    GH_BRANCH,
+    GH_TOKEN_SET: !!GH_TOKEN,
+    GH_TOKEN_PREVIEW: redactToken(GH_TOKEN),
+    WORKFLOW,
+    CALLBACK_PORT: process.env.CALLBACK_PORT || null,
+    CALLBACK_URL: process.env.CALLBACK_URL || null,
+  },
+});
 
 function extractGDriveIds(text) {
   const regex = /(?:\/d\/|[?&]id=)([a-zA-Z0-9_-]{25,})/g;
@@ -36,6 +120,11 @@ function githubHeaders() {
 async function triggerWorkflow(inputs) {
   const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${WORKFLOW}/dispatches`;
   const before = Date.now();
+  logDebug("triggerWorkflow:entry", "dispatching workflow", {
+    job_id: inputs.job_id,
+    file_ids: inputs.file_id,
+    chat_id: inputs.chat_id,
+  });
 
   const res = await fetch(url, {
     method: "POST",
@@ -45,8 +134,18 @@ async function triggerWorkflow(inputs) {
 
   if (res.status !== 204) {
     const body = await res.text();
+    logError(
+      "triggerWorkflow:dispatch",
+      `GitHub dispatch failed ${res.status}`,
+      new Error(`GitHub dispatch failed: ${res.status}`),
+      { body, job_id: inputs.job_id },
+    );
     throw new Error(`GitHub dispatch failed: ${res.status} ${body}`);
   }
+
+  logInfo("triggerWorkflow:dispatch", "dispatch accepted (204)", {
+    job_id: inputs.job_id,
+  });
 
   for (let attempt = 0; attempt < 20; attempt++) {
     await sleep(3000);
@@ -56,16 +155,37 @@ async function triggerWorkflow(inputs) {
     const run = (data.workflow_runs || []).find(
       (w) => new Date(w.created_at).getTime() > before - 5000,
     );
-    if (run) return run.id;
+    if (run) {
+      logInfo("triggerWorkflow:found", `run found after ${attempt + 1} attempts`, {
+        run_id: run.id,
+        status: run.status,
+        job_id: inputs.job_id,
+      });
+      return run.id;
+    }
   }
+  logError(
+    "triggerWorkflow:timeout",
+    "Could not find new workflow run after 20 attempts",
+    new Error("workflow run lookup timeout"),
+    { job_id: inputs.job_id },
+  );
   throw new Error("Could not find the new workflow run after dispatch");
 }
 
 async function getRunStatus(runId) {
   const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/runs/${runId}`;
+  logDebug("getRunStatus:fetch", `checking run ${runId}`);
   const r = await fetch(url, { headers: githubHeaders() });
   const data = await r.json();
-  return { status: data.status, conclusion: data.conclusion };
+  const status = data.status;
+  const conclusion = data.conclusion;
+  logDebug("getRunStatus:result", `run ${runId} status`, {
+    status,
+    conclusion,
+    run_name: data.name,
+  });
+  return { status, conclusion };
 }
 
 function sleep(ms) {
@@ -115,10 +235,22 @@ function startCallbackServer(bot) {
 }
 
 async function handleCallback(bot, payload) {
+  logDebug("handleCallback:entry", "received callback", {
+    job_id: payload.job_id,
+    event: payload.event,
+    chat_id: payload.chat_id,
+    msg_preview: payload.message?.slice(0, 120),
+  });
   const { job_id, event, message: msg, chat_id } = payload;
   const job = jobs.get(job_id);
   const cid = chat_id || job?.chatId;
-  if (!cid) return;
+  if (!cid) {
+    logWarn("handleCallback:skip", "no matching job_id or chat_id", {
+      job_id,
+      known_jobs: [...jobs.keys()],
+    });
+    return;
+  }
 
   if (job) job.workerActive = true;
 
@@ -132,19 +264,26 @@ async function handleCallback(bot, payload) {
       if (job) job.msgId = m.message_id;
     }
   } else if (event === "done") {
+    logInfo("handleCallback:done", `job ${job_id} done`, {
+      msg_preview: msg?.slice(0, 200),
+    });
     if (job?.msgId) {
       await bot.telegram
         .editMessageText(cid, job.msgId, null, `Done\n\n${msg}`)
-        .catch(() => {});
+        .catch((e) => logError("handleCallback:edit", "edit failed", e));
     } else {
       await bot.telegram.sendMessage(cid, `Done\n\n${msg}`);
     }
     jobs.delete(job_id);
   } else if (event === "error") {
+    logError("handleCallback:error", `job ${job_id} error`, new Error(msg), {
+      chat_id: cid,
+      job_id,
+    });
     if (job?.msgId) {
       await bot.telegram
         .editMessageText(cid, job.msgId, null, `Failed: ${msg}`)
-        .catch(() => {});
+        .catch((e) => logError("handleCallback:edit", "edit failed", e));
     } else {
       await bot.telegram.sendMessage(cid, `Failed: ${msg}`);
     }
@@ -153,22 +292,43 @@ async function handleCallback(bot, payload) {
 }
 
 async function pollJobUntilDone(bot, jobId, runId) {
+  logDebug("pollJobUntilDone:entry", `starting poll loop`, { jobId, runId });
   const job = jobs.get(jobId);
-  if (!job) return;
+  if (!job) {
+    logWarn("pollJobUntilDone:missing", "job not found in Map", { jobId });
+    return;
+  }
 
+  let loops = 0;
   while (true) {
+    loops += 1;
     await sleep(15000);
     const job2 = jobs.get(jobId);
-    if (!job2) return;
+    if (!job2) {
+      logInfo("pollJobUntilDone:exit", "job removed from Map, stopping poll", {
+        jobId,
+        loops,
+      });
+      return;
+    }
 
     let runStatus;
     try {
       runStatus = await getRunStatus(runId);
-    } catch {
+    } catch (e) {
+      logDebug("pollJobUntilDone:fetch_err", `run status fetch failed`, {
+        runId,
+        loops,
+      });
       continue;
     }
 
     if (runStatus.status === "completed") {
+      logInfo("pollJobUntilDone:completed", `run completed`, {
+        runId,
+        conclusion: runStatus.conclusion,
+        loops,
+      });
       if (runStatus.conclusion !== "success" && job2.msgId) {
         await bot.telegram
           .editMessageText(
@@ -177,7 +337,7 @@ async function pollJobUntilDone(bot, jobId, runId) {
             null,
             `Worker failed (${runStatus.conclusion}) — check GitHub Actions logs`,
           )
-          .catch(() => {});
+          .catch((e) => logError("pollJobUntilDone:edit", "edit failed", e));
       }
       jobs.delete(jobId);
       return;
@@ -426,28 +586,34 @@ async function handleCancel(ctx) {
 }
 
 bot.action("action:debug", async (ctx) => {
+  logInfo("bot:action:debug", "button pressed", { from: ctx.from?.id });
   try {
     await ctx.answerCbQuery({ text: "Running debug..." });
     await handleDebug(ctx);
   } catch (err) {
+    logError("bot:action:debug", "debug handler error", err);
     console.log(chalk.bold("debug error"), chalk.white(err.message));
     await ctx.reply(`❌ Debug failed: ${err.message}`);
   }
 });
 bot.action("action:jobs", async (ctx) => {
+  logInfo("bot:action:jobs", "button pressed", { from: ctx.from?.id });
   try {
     await ctx.answerCbQuery({ text: "Fetching jobs..." });
     await handleJobs(ctx);
   } catch (err) {
+    logError("bot:action:jobs", "jobs handler error", err);
     console.log(chalk.bold("jobs error"), chalk.white(err.message));
     await ctx.reply(`❌ Jobs check failed: ${err.message}`);
   }
 });
 bot.action("action:cancel", async (ctx) => {
+  logInfo("bot:action:cancel", "button pressed", { from: ctx.from?.id });
   try {
     await ctx.answerCbQuery({ text: "Cancelling..." });
     await handleCancel(ctx);
   } catch (err) {
+    logError("bot:action:cancel", "cancel handler error", err);
     console.log(chalk.bold("cancel error"), chalk.white(err.message));
     await ctx.reply(`❌ Cancel failed: ${err.message}`);
   }

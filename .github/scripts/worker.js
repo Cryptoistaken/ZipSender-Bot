@@ -7,6 +7,73 @@ import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
 
+/* ── agent-first structured logger ─────────────────────────── */
+const DEBUG = process.env.DEBUG === "true";
+const LOG_FILE = ".logs/worker.jsonl";
+
+function ensureLogDir() {
+  try { fs.mkdirSync(".logs", { recursive: true }); } catch {}
+}
+
+function debugLog(level, source, message, data = null, err = null) {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    source,
+    msg: message,
+    pid: process.pid,
+  };
+  if (data) entry.data = data;
+  if (err) {
+    entry.error = {
+      message: err.message,
+      stack: err.stack,
+      name: err.name,
+    };
+  }
+  try {
+    ensureLogDir();
+    fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n");
+  } catch (e) {
+    console.error("[LOG_ERR]", e.message);
+  }
+  if (DEBUG || level === "ERROR" || level === "WARN") {
+    const prefix = level === "ERROR" ? "[ERR]" : level === "WARN" ? "[WARN]" : "[DBG]";
+    console.log(prefix, source, message, data ? JSON.stringify(data) : "");
+  }
+}
+
+function logInfo(source, msg, data) { debugLog("INFO", source, msg, data); }
+function logError(source, msg, err, data) { debugLog("ERROR", source, msg, data, err); }
+function logDebug(source, msg, data) { debugLog("DEBUG", source, msg, data); }
+function logWarn(source, msg, data) { debugLog("WARN", source, msg, data); }
+
+function redactToken(tok) {
+  if (!tok) return null;
+  return tok.slice(0, 6) + "****";
+}
+
+/* ── startup snapshot ──────────────────────────────────────── */
+debugLog("INFO", "worker:startup", "worker starting", {
+  node: process.version,
+  platform: process.platform,
+  env: {
+    FILE_IDS,
+    CHAT_ID,
+    JOB_ID,
+    MSG_ID,
+    CALLBACK_URL_SET: !!process.env.INPUT_CALLBACK_URL,
+    AUNT_USERNAME,
+    TELEGRAM_API_ID_SET: !!process.env.TELEGRAM_API_ID,
+    TELEGRAM_API_HASH_SET: !!process.env.TELEGRAM_API_HASH,
+    TELEGRAM_SESSION_SET: !!process.env.TELEGRAM_SESSION,
+    BOT_TOKEN_SET: !!process.env.BOT_TOKEN,
+    BOT_TOKEN_PREVIEW: redactToken(process.env.BOT_TOKEN),
+    GROQ_API_KEY_SET: !!process.env.GROQ_API_KEY,
+    GROQ_API_KEY_PREVIEW: redactToken(process.env.GROQ_API_KEY),
+  },
+});
+
 const FILE_IDS = (process.env.INPUT_FILE_ID || "")
   .split(",")
   .map((s) => s.trim())
@@ -117,6 +184,7 @@ function contentTypeToExt(contentType) {
 }
 
 async function downloadFile(fileId, destPath, quiet = false) {
+  logDebug("downloadFile:entry", "starting download", { fileId, destPath });
   const url = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
 
   const response = await axios.get(url, {
@@ -152,9 +220,11 @@ async function downloadFile(fileId, destPath, quiet = false) {
         ? `Downloading\n${bar} ${pct}%\n${formatBytes(downloaded)} / ${formatBytes(total)}  |  ${formatSpeed(speed)}`
         : `Downloading\n${formatBytes(downloaded)} downloaded  |  ${formatSpeed(speed)}`;
       console.log(msg.replace(/\n/g, "  "));
-      await callback("progress", msg);
+      if (!quiet) await callback("progress", msg);
     }
   });
+
+  logDebug("downloadFile:start", "stream pipe started", { fileId, destPath });
 
   const writer = fs.createWriteStream(destPath);
   response.data.pipe(writer);
@@ -207,6 +277,7 @@ async function downloadFile(fileId, destPath, quiet = false) {
 }
 
 async function extractZip(zipPath, destDir) {
+  logDebug("extractZip:entry", "extracting archive", { zipPath, destDir });
   await fs
     .createReadStream(zipPath)
     .pipe(unzipper.Extract({ path: destDir }))
@@ -229,10 +300,15 @@ async function extractZip(zipPath, destDir) {
     })
     .sort((a, b) => a.originalName.localeCompare(b.originalName));
 
+  logInfo("extractZip:done", `found ${videoFiles.length} video file(s)`, {
+    zipPath,
+    videoFiles: videoFiles.map((v) => v.originalName),
+  });
   return videoFiles;
 }
 
 async function aiRenameFiles(fileNames) {
+  logDebug("aiRenameFiles:entry", "renaming", { count: fileNames.length, names: fileNames });
   const groq = new OpenAI({
     apiKey: GROQ_API_KEY,
     baseURL: "https://api.groq.com/openai/v1",
@@ -263,9 +339,18 @@ Return only a JSON array of the cleaned names in the same order. No markdown, no
 
   try {
     const text = completion.choices[0].message.content.trim();
+    logDebug("aiRenameFiles:raw", "LLM raw response", { raw: text.slice(0, 500) });
     const parsed = JSON.parse(text);
+    logInfo("aiRenameFiles:done", "rename succeeded", {
+      input: fileNames,
+      output: parsed,
+    });
     return parsed;
-  } catch {
+  } catch (err) {
+    logError("aiRenameFiles:fail", "rename parse/API failed", err, {
+      input: fileNames,
+      raw_preview: completion?.choices?.[0]?.message?.content?.slice(0, 200),
+    });
     return fileNames;
   }
 }
@@ -273,6 +358,7 @@ Return only a JSON array of the cleaned names in the same order. No markdown, no
 let gramClient = null;
 
 async function initGramClient() {
+  logDebug("initGramClient:entry", "connecting to Telegram");
   const silentLogger = new Logger("none");
   const session = new StringSession(TELEGRAM_SESSION);
   gramClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
@@ -282,9 +368,15 @@ async function initGramClient() {
     baseLogger: silentLogger,
   });
   await gramClient.connect();
+  logInfo("initGramClient:done", "GramJS connected");
 }
 
 async function sendVideoToAunt(filePath, renamedName, fileIndex, total, quiet = false) {
+  logDebug("sendVideoToAunt:entry", `sending file ${fileIndex}/${total}`, {
+    renamedName,
+    filePath,
+    size: fs.existsSync(filePath) ? fs.statSync(filePath).size : null,
+  });
   const dir = path.dirname(filePath);
   const renamedPath = path.join(dir, renamedName);
 
@@ -314,9 +406,16 @@ async function sendVideoToAunt(filePath, renamedName, fileIndex, total, quiet = 
       }
     },
   });
+  logInfo("sendVideoToAunt:done", `file sent`, { renamedName, fileIndex, total, size: fileSize });
 }
 
 async function main() {
+  logInfo("main:entry", "main() starting", {
+    file_ids_count: FILE_IDS.length,
+    chat_id: CHAT_ID,
+    job_id: JOB_ID,
+    callback_url_set: !!CALLBACK_URL,
+  });
   if (FILE_IDS.length === 0 || !CHAT_ID || !JOB_ID) {
     console.error(
       "missing required inputs: INPUT_FILE_ID, INPUT_CHAT_ID, INPUT_JOB_ID",
@@ -344,7 +443,9 @@ async function main() {
   let downloads;
   try {
     downloads = await Promise.all(downloadTasks);
+    logInfo("main:downloads", `all ${downloads.length} downloads finished`);
   } catch (err) {
+    logError("main:downloads", "download batch failed", err);
     await callback("error", `Download failed: ${err.message}`);
     process.exit(1);
   }
@@ -375,8 +476,10 @@ async function main() {
       try {
         fs.mkdirSync(extractDir, { recursive: true });
         const files = await extractZip(zipPath, extractDir);
+        logDebug("main:extract", `zip ${index} yielded ${files.length} video(s)`);
         allFiles.push(...files);
       } catch (err) {
+        logError("main:extract", `extraction failed for index ${index}`, err);
         await callback("error", `Extraction failed: ${err.message}`);
         process.exit(1);
       }
@@ -429,6 +532,10 @@ async function main() {
         false,
       );
     } catch (err) {
+      logError("main:upload", `upload failed for ${file.renamedName}`, err, {
+        fullPath: file.fullPath,
+        index: i + 1,
+      });
       await callback(
         "progress",
         `Failed to send ${file.renamedName}: ${err.message}`,
@@ -450,6 +557,10 @@ async function main() {
 }
 
 main().catch(async (err) => {
+  logError("main:fatal", "unhandled crash at top level", err, {
+    file_ids: FILE_IDS,
+    job_id: JOB_ID,
+  });
   console.error("fatal:", err);
   await callback("error", `worker crashed: ${err.message}`);
   process.exit(1);
