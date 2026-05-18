@@ -120,7 +120,7 @@ function formatSpeed(bytesPerSec) {
 function formatBytesShort(bytes) {
   if (bytes >= 1024 * 1024 * 1024)
     return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)}MB`;
+  if (bytes >= 1024 * 1024 || bytes === 0) return `${(bytes / 1024 / 1024).toFixed(0)}MB`;
   return `${(bytes / 1024).toFixed(0)}KB`;
 }
 
@@ -411,9 +411,20 @@ async function sendVideoToAunt(
     baseLogger: silentLogger,
   });
 
-  if (!sharedClient) await client.connect();
+  const origWarn = console.warn;
+  const origError = console.error;
+  const filterGramJS = (...args) => {
+    const txt = args.join(" ");
+    if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
+    if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn.apply(console, args);
+    else origError.apply(console, args);
+  };
+  console.warn = filterGramJS;
+  console.error = filterGramJS;
 
   try {
+    if (!sharedClient) await client.connect();
+
     await client.sendFile(AUNT_USERNAME, {
       file: renamedPath,
       forceDocument: true,
@@ -436,6 +447,8 @@ async function sendVideoToAunt(
       size: fileSize,
     });
   } finally {
+    console.warn = origWarn;
+    console.error = origError;
     if (!sharedClient) {
       await client.disconnect();
       await client.destroy();
@@ -603,9 +616,22 @@ async function main() {
     retryDelay: 1000,
     baseLogger: silentLogger,
   });
-  await uploadClient.connect();
 
-  for (let i = 0; i < allFiles.length; i++) {
+  const origWarn2 = console.warn;
+  const origError2 = console.error;
+  const filterGramJS2 = (...args) => {
+    const txt = args.join(" ");
+    if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
+    if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn2.apply(console, args);
+    else origError2.apply(console, args);
+  };
+  console.warn = filterGramJS2;
+  console.error = filterGramJS2;
+
+  try {
+    await uploadClient.connect();
+
+    for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
     try {
       await sendVideoToAunt(
@@ -629,8 +655,12 @@ async function main() {
     }
   }
 
-  await uploadClient.disconnect();
-  await uploadClient.destroy();
+  } finally {
+    await uploadClient.disconnect();
+    await uploadClient.destroy();
+    console.warn = origWarn2;
+    console.error = origError2;
+  }
   await reportUploads(true);
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
