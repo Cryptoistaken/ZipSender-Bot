@@ -52,26 +52,6 @@ function redactToken(tok) {
   return tok.slice(0, 6) + "****";
 }
 
-debugLog("INFO", "worker:startup", "worker starting", {
-  node: process.version,
-  platform: process.platform,
-  env: {
-    FILE_IDS,
-    CHAT_ID,
-    JOB_ID,
-    MSG_ID,
-    CALLBACK_URL_SET: !!process.env.INPUT_CALLBACK_URL,
-    AUNT_USERNAME,
-    TELEGRAM_API_ID_SET: !!process.env.TELEGRAM_API_ID,
-    TELEGRAM_API_HASH_SET: !!process.env.TELEGRAM_API_HASH,
-    TELEGRAM_SESSION_SET: !!process.env.TELEGRAM_SESSION,
-    BOT_TOKEN_SET: !!process.env.BOT_TOKEN,
-    BOT_TOKEN_PREVIEW: redactToken(process.env.BOT_TOKEN),
-    GROQ_API_KEY_SET: !!process.env.GROQ_API_KEY,
-    GROQ_API_KEY_PREVIEW: redactToken(process.env.GROQ_API_KEY),
-  },
-});
-
 const FILE_IDS = (process.env.INPUT_FILE_ID || "")
   .split(",")
   .map((s) => s.trim())
@@ -84,6 +64,26 @@ const MSG_ID = process.env.INPUT_MSG_ID
 const CALLBACK_URL = process.env.INPUT_CALLBACK_URL || "";
 const CALLBACK_SECRET = process.env.INPUT_CALLBACK_SECRET || "";
 const AUNT_USERNAME = process.env.INPUT_AUNT_USERNAME;
+
+debugLog("INFO", "worker:startup", "worker starting", {
+  node: process.version,
+  platform: process.platform,
+  env: {
+    FILE_IDS,
+    CHAT_ID,
+    JOB_ID,
+    MSG_ID,
+    CALLBACK_URL_SET: !!CALLBACK_URL,
+    AUNT_USERNAME,
+    TELEGRAM_API_ID_SET: !!process.env.TELEGRAM_API_ID,
+    TELEGRAM_API_HASH_SET: !!process.env.TELEGRAM_API_HASH,
+    TELEGRAM_SESSION_SET: !!process.env.TELEGRAM_SESSION,
+    BOT_TOKEN_SET: !!process.env.BOT_TOKEN,
+    BOT_TOKEN_PREVIEW: redactToken(process.env.BOT_TOKEN),
+    GROQ_API_KEY_SET: !!process.env.GROQ_API_KEY,
+    GROQ_API_KEY_PREVIEW: redactToken(process.env.GROQ_API_KEY),
+  },
+});
 
 const TELEGRAM_API_ID = Number(process.env.TELEGRAM_API_ID);
 const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH;
@@ -483,7 +483,6 @@ async function main() {
       }
       fs.rmSync(zipPath, { force: true });
     }
-    fs.rmSync(tmpPath, { force: true });
   }
 
   if (allFiles.length === 0) {

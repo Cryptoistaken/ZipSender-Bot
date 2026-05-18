@@ -7,7 +7,7 @@ on:
         description: "Unique job ID from coordinator"
         required: true
       file_id:
-        description: "Google Drive file ID"
+        description: "Google Drive file IDs, comma-separated"
         required: true
       chat_id:
         description: "Telegram chat ID to report back to"
@@ -17,7 +17,7 @@ on:
         required: false
         default: ""
       callback_url:
-        description: "Optional HTTP callback URL on your server"
+        description: "Optional HTTP callback URL"
         required: false
         default: ""
       callback_secret:
@@ -30,7 +30,7 @@ on:
 
 jobs:
   process:
-    name: Download → Extract → Rename → Upload
+    name: Download - Extract - Rename - Upload
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -38,16 +38,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: npm install
+        run: bun install
 
       - name: Run worker
         env:
@@ -64,4 +59,4 @@ jobs:
           BOT_TOKEN:         ${{ secrets.BOT_TOKEN }}
           GROQ_API_KEY:      ${{ secrets.GROQ_API_KEY }}
 
-        run: node .github/scripts/worker.js
+        run: bun run .github/scripts/worker.js
