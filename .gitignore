@@ -1,4 +1,5 @@
 .env
+.env.local
 .env.github
 node_modules
 convex/_generated/
