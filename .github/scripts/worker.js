@@ -125,10 +125,10 @@ function formatBytesShort(bytes) {
 }
 
 function formatSpeedShort(bytesPerSec) {
-  if (!bytesPerSec) return "0KB/s";
+  if (!bytesPerSec) return "0KB";
   if (bytesPerSec > 1024 * 1024)
-    return `${(bytesPerSec / 1024 / 1024).toFixed(1)}MB/s`;
-  return `${(bytesPerSec / 1024).toFixed(1)}KB/s`;
+    return `${(bytesPerSec / 1024 / 1024).toFixed(1)}MB`;
+  return `${(bytesPerSec / 1024).toFixed(1)}KB`;
 }
 
 function buildBar(pct, width = 12) {
@@ -473,13 +473,13 @@ async function main() {
     isDownloadingReport = true;
 
     try {
-      const lines = [`DL ${FILE_IDS.length}`];
+      const lines = [];
       downloadStates.forEach((s, i) => {
         const bar = buildBar(s.pct);
         const spec = s.total > 0
-          ? `${s.pct}% ${formatBytesShort(s.downloaded)}/${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
+          ? `${s.pct}% ${formatBytesShort(s.downloaded)}|${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
           : `${formatBytesShort(s.downloaded)} ${formatSpeedShort(s.speed)}`;
-        lines.push(`${i + 1}/${FILE_IDS.length} ${bar} ${spec}`);
+        lines.push(`${i + 1}|${FILE_IDS.length} ${bar} ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
@@ -569,8 +569,6 @@ async function main() {
     console.log("groq error, using original names:", err.message);
   }
 
-  await callback("progress", `UL ${allFiles.length}`);
-
   const uploadStates = allFiles.map((f) => ({ pct: 0, uploaded: 0, total: f.size, speed: 0 }));
   let lastUploadReport = 0;
   let isUploadingReport = false;
@@ -583,14 +581,13 @@ async function main() {
     isUploadingReport = true;
 
     try {
-      const lines = [`UL ${allFiles.length}`];
+      const lines = [];
       uploadStates.forEach((s, i) => {
         const bar = buildBar(s.pct);
-        const name = allFiles[i].renamedName;
         const spec = s.total > 0
-          ? `${s.pct}% ${formatBytesShort(s.uploaded)}/${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
+          ? `${s.pct}% ${formatBytesShort(s.uploaded)}|${formatBytesShort(s.total)} ${formatSpeedShort(s.speed)}`
           : `${formatBytesShort(s.uploaded)} ${formatSpeedShort(s.speed)}`;
-        lines.push(`${i + 1}/${allFiles.length} ${bar} ${spec}  ${name}`);
+        lines.push(`${i + 1}|${allFiles.length} ${bar} ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
