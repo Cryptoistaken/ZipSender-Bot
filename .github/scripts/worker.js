@@ -7,7 +7,10 @@ import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
 
-const FILE_ID = process.env.INPUT_FILE_ID;
+const FILE_IDS = (process.env.INPUT_FILE_ID || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const CHAT_ID = process.env.INPUT_CHAT_ID;
 const JOB_ID = process.env.INPUT_JOB_ID;
 const MSG_ID = process.env.INPUT_MSG_ID
@@ -113,7 +116,7 @@ function contentTypeToExt(contentType) {
   return map[ct] || null;
 }
 
-async function downloadFile(fileId, destPath) {
+async function downloadFile(fileId, destPath, quiet = false) {
   const url = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
 
   const response = await axios.get(url, {
@@ -281,7 +284,7 @@ async function initGramClient() {
   await gramClient.connect();
 }
 
-async function sendVideoToAunt(filePath, renamedName, fileIndex, total) {
+async function sendVideoToAunt(filePath, renamedName, fileIndex, total, quiet = false) {
   const dir = path.dirname(filePath);
   const renamedPath = path.join(dir, renamedName);
 
@@ -307,14 +310,14 @@ async function sendVideoToAunt(filePath, renamedName, fileIndex, total) {
         const bar = buildBar(pct);
         const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
         console.log(msg.replace(/\n/g, "  "));
-        await callback("progress", msg);
+        if (!quiet) await callback("progress", msg);
       }
     },
   });
 }
 
 async function main() {
-  if (!FILE_ID || !CHAT_ID || !JOB_ID) {
+  if (FILE_IDS.length === 0 || !CHAT_ID || !JOB_ID) {
     console.error(
       "missing required inputs: INPUT_FILE_ID, INPUT_CHAT_ID, INPUT_JOB_ID",
     );
@@ -323,65 +326,79 @@ async function main() {
 
   fs.mkdirSync("tmp", { recursive: true });
 
-  await callback("progress", "Connecting to Google Drive");
+  await callback(
+    "progress",
+    `Found ${FILE_IDS.length} Drive link(s) — downloading in parallel...`,
+  );
 
-  const tmpPath = `tmp/download_${Date.now()}.tmp`;
-  let result;
+  const downloadTasks = FILE_IDS.map((fileId, index) => {
+    const tmpPath = `tmp/download_${index}_${Date.now()}.tmp`;
+    return downloadFile(fileId, tmpPath, true).then((result) => ({
+      result,
+      tmpPath,
+      fileId,
+      index,
+    }));
+  });
+
+  let downloads;
   try {
-    result = await downloadFile(FILE_ID, tmpPath);
+    downloads = await Promise.all(downloadTasks);
   } catch (err) {
     await callback("error", `Download failed: ${err.message}`);
     process.exit(1);
   }
 
-  let files = [];
+  let allFiles = [];
 
-  if (result.type === "video") {
-    const videoPath = `tmp/video_${Date.now()}${result.ext}`;
-    fs.renameSync(tmpPath, videoPath);
-    const stat = fs.statSync(videoPath);
-    const guessedName = result.originalFilename || `video${result.ext}`;
-    const nameWithExt = path.extname(guessedName)
-      ? guessedName
-      : guessedName + result.ext;
-    files = [
-      {
+  for (const { result, tmpPath, index } of downloads) {
+    if (result.type === "video") {
+      const videoPath = `tmp/video_${index}_${Date.now()}${result.ext}`;
+      fs.renameSync(tmpPath, videoPath);
+      const stat = fs.statSync(videoPath);
+      const guessedName = result.originalFilename || `video${result.ext}`;
+      const nameWithExt = path.extname(guessedName)
+        ? guessedName
+        : guessedName + result.ext;
+      allFiles.push({
         originalName: nameWithExt,
         renamedName: nameWithExt,
         fullPath: videoPath,
         size: stat.size,
-      },
-    ];
-  } else {
-    const zipPath = `tmp/archive_${Date.now()}.zip`;
-    const extractDir = `tmp/extracted_${Date.now()}/`;
-    fs.renameSync(tmpPath, zipPath);
+      });
+    } else {
+      const zipPath = `tmp/archive_${index}_${Date.now()}.zip`;
+      const extractDir = `tmp/extracted_${index}_${Date.now()}/`;
+      fs.renameSync(tmpPath, zipPath);
 
-    await callback("progress", "Extracting ZIP archive");
-    try {
-      fs.mkdirSync(extractDir, { recursive: true });
-      files = await extractZip(zipPath, extractDir);
+      await callback("progress", "Extracting ZIP archive(s)...");
+      try {
+        fs.mkdirSync(extractDir, { recursive: true });
+        const files = await extractZip(zipPath, extractDir);
+        allFiles.push(...files);
+      } catch (err) {
+        await callback("error", `Extraction failed: ${err.message}`);
+        process.exit(1);
+      }
       fs.rmSync(zipPath, { force: true });
-    } catch (err) {
-      await callback("error", `Extraction failed: ${err.message}`);
-      process.exit(1);
     }
+    fs.rmSync(tmpPath, { force: true });
+  }
 
-    if (files.length === 0) {
-      await callback("error", "No video files found in ZIP");
-      process.exit(1);
-    }
+  if (allFiles.length === 0) {
+    await callback("error", "No video files found in any archive");
+    process.exit(1);
   }
 
   await callback(
     "progress",
-    `Found ${files.length} file(s) — running AI rename...`,
+    `Found ${allFiles.length} file(s) total — running AI rename...`,
   );
 
   try {
-    const originalNames = files.map((f) => f.originalName);
+    const originalNames = allFiles.map((f) => f.originalName);
     const newNames = await aiRenameFiles(originalNames);
-    files = files.map((f, i) => ({
+    allFiles = allFiles.map((f, i) => ({
       ...f,
       renamedName: newNames[i] || f.originalName,
     }));
@@ -391,7 +408,7 @@ async function main() {
 
   await callback(
     "progress",
-    `Starting upload of ${files.length} file(s) to Telegram...`,
+    `Starting upload of ${allFiles.length} file(s) to Telegram...`,
   );
 
   try {
@@ -401,14 +418,15 @@ async function main() {
     process.exit(1);
   }
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+  for (let i = 0; i < allFiles.length; i++) {
+    const file = allFiles[i];
     try {
       await sendVideoToAunt(
         file.fullPath,
         file.renamedName,
         i + 1,
-        files.length,
+        allFiles.length,
+        false,
       );
     } catch (err) {
       await callback(
@@ -416,17 +434,18 @@ async function main() {
         `Failed to send ${file.renamedName}: ${err.message}`,
       );
     }
-    fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), {
-      force: true,
-    });
+    fs.rmSync(
+      path.join(path.dirname(file.fullPath), file.renamedName),
+      { force: true },
+    );
   }
 
   await gramClient.disconnect();
 
-  const totalSize = files.reduce((s, f) => s + f.size, 0);
+  const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   await callback(
     "done",
-    `Done — ${files.length} file(s) sent\nTotal: ${formatBytes(totalSize)}\n${files.map((f) => `  ${f.renamedName}`).join("\n")}`,
+    `Done — ${allFiles.length} file(s) sent\nTotal: ${formatBytes(totalSize)}\n${allFiles.map((f) => `  ${f.renamedName}`).join("\n")}`,
   );
 }
 

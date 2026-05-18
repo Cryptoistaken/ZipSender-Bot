@@ -13,9 +13,14 @@ const WORKFLOW = "worker.yml";
 
 const jobs = new Map();
 
-function extractGDriveId(url) {
-  const match = url.match(/(?:\/d\/|[?&]id=)([a-zA-Z0-9_-]{25,})/);
-  return match ? match[1] : null;
+function extractGDriveIds(text) {
+  const regex = /(?:\/d\/|[?&]id=)([a-zA-Z0-9_-]{25,})/g;
+  const matches = [];
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    matches.push(m[1]);
+  }
+  return [...new Set(matches)];
 }
 
 function githubHeaders() {
@@ -243,20 +248,14 @@ async function handleDebug(ctx) {
   if (!GH_OWNER) missing.push("GITHUB_OWNER");
   if (!GH_REPO) missing.push("GITHUB_REPO");
   if (missing.length) {
-    await ctx.reply(`Missing env vars: ${missing.join(", ")}`);
+    await ctx.reply(`❌ Missing env vars: ${missing.join(", ")}`);
     return;
   }
-  lines.push(`env vars: ok`);
+  lines.push(`✅ env vars ok`);
   lines.push(`  owner:  ${GH_OWNER}`);
   lines.push(`  repo:   ${GH_REPO}`);
   lines.push(`  branch: ${GH_BRANCH}`);
   lines.push(`  token:  ${GH_TOKEN.slice(0, 10)}...`);
-
-  const sent = await ctx.reply(lines.join("\n") + "\n\nChecking GitHub API");
-  const edit = (text) =>
-    ctx.telegram
-      .editMessageText(ctx.chat.id, sent.message_id, null, text)
-      .catch(() => {});
 
   try {
     const r = await fetch(
@@ -265,23 +264,21 @@ async function handleDebug(ctx) {
     );
     const data = await r.json();
     if (r.status === 404) {
-      lines.push(`repo not found — check GITHUB_OWNER and GITHUB_REPO`);
-      await edit(lines.join("\n"));
+      lines.push(`❌ repo not found — check GITHUB_OWNER and GITHUB_REPO`);
+      await ctx.reply(lines.join("\n"));
       return;
     }
     if (r.status === 401 || r.status === 403) {
-      lines.push(
-        `token rejected (${r.status}) — check GITHUB_TOKEN and its permissions`,
-      );
-      await edit(lines.join("\n"));
+      lines.push(`❌ token rejected (${r.status}) — check GITHUB_TOKEN`);
+      await ctx.reply(lines.join("\n"));
       return;
     }
     lines.push(
-      `repo: ${data.full_name} (${data.private ? "private" : "public"})`,
+      `✅ repo: ${data.full_name} (${data.private ? "private" : "public"})`,
     );
   } catch (e) {
-    lines.push(`GitHub API unreachable: ${e.message}`);
-    await edit(lines.join("\n"));
+    lines.push(`❌ GitHub API unreachable: ${e.message}`);
+    await ctx.reply(lines.join("\n"));
     return;
   }
 
@@ -297,17 +294,16 @@ async function handleDebug(ctx) {
     );
     if (!found) {
       const names = workflows.map((w) => w.path).join(", ") || "none";
-      lines.push(`workflow not found: .github/workflows/${WORKFLOW}`);
-      lines.push(`  workflows in repo: ${names}`);
-      lines.push(`  push worker.yml to your repo and try again`);
+      lines.push(`❌ workflow .github/workflows/${WORKFLOW} not found`);
+      lines.push(`   workflows in repo: ${names}`);
     } else {
-      lines.push(`workflow: ${found.name} (state: ${found.state})`);
+      lines.push(`✅ workflow: ${found.name} (state: ${found.state})`);
       if (found.state !== "active") {
-        lines.push(`  state is "${found.state}" — enable it in GitHub UI`);
+        lines.push(`   ⚠️ state is "${found.state}" — enable it in GitHub UI`);
       }
     }
   } catch (e) {
-    lines.push(`could not list workflows: ${e.message}`);
+    lines.push(`❌ could not list workflows: ${e.message}`);
   }
 
   try {
@@ -316,87 +312,164 @@ async function handleDebug(ctx) {
       { headers: githubHeaders() },
     );
     if (r.status === 404) {
-      lines.push(
-        `branch "${GH_BRANCH}" not found — check GITHUB_BRANCH in .env`,
-      );
+      lines.push(`❌ branch "${GH_BRANCH}" not found`);
     } else {
-      lines.push(`branch "${GH_BRANCH}": ok`);
+      lines.push(`✅ branch "${GH_BRANCH}": ok`);
     }
   } catch (e) {
-    lines.push(`could not check branch: ${e.message}`);
+    lines.push(`❌ could not check branch: ${e.message}`);
   }
 
-  await edit(lines.join("\n"));
+  await ctx.reply(lines.join("\n"));
 }
 
 async function handleJobs(ctx) {
-  if (jobs.size === 0) {
+  const parts = [];
+
+  if (jobs.size > 0) {
+    const localLines = [...jobs.entries()].map(([id, j]) => {
+      const age = Math.floor((Date.now() - j.startedAt) / 1000);
+      const fileCount = j.fileIds
+        ? j.fileIds.split(",").length
+        : j.fileId
+          ? 1
+          : 0;
+      return `  ${id.slice(0, 8)}  files: ${fileCount}  ${age}s ago`;
+    });
+    parts.push(`🤖 Local jobs (${jobs.size}):\n${localLines.join("\n")}`);
+  }
+
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${WORKFLOW}/runs?per_page=5`,
+      { headers: githubHeaders() },
+    );
+    const data = await r.json();
+    const runs = (data.workflow_runs || []).slice(0, 5);
+    if (runs.length > 0) {
+      const runLines = runs.map((w) => {
+        const icon =
+          w.status === "completed"
+            ? w.conclusion === "success"
+              ? "✅"
+              : "❌"
+            : "⏳";
+        const ageMin = Math.floor(
+          (Date.now() - new Date(w.created_at)) / 60000,
+        );
+        return `  ${icon} ${w.display_title || w.name} — ${w.status} (${ageMin}m ago)`;
+      });
+      parts.push(`☁️ GitHub runs:\n${runLines.join("\n")}`);
+    }
+  } catch (e) {
+    parts.push(`⚠️ GitHub fetch failed: ${e.message}`);
+  }
+
+  if (parts.length === 0) {
     await ctx.reply("No active jobs.", mainKeyboard);
     return;
   }
-  const lines = [...jobs.entries()].map(([id, j]) => {
-    const age = Math.floor((Date.now() - j.startedAt) / 1000);
-    return `  ${id.slice(0, 8)}  fileId: ${j.fileId.slice(0, 12)}  ${age}s ago`;
-  });
-  await ctx.reply(
-    `Active jobs (${jobs.size}):\n${lines.join("\n")}`,
-    mainKeyboard,
-  );
+
+  await ctx.reply(parts.join("\n\n"), mainKeyboard);
 }
 
 async function handleCancel(ctx) {
   const chatId = String(ctx.chat.id);
-  const jobEntry = [...jobs.entries()].findLast(([, j]) => j.chatId === chatId);
-  if (!jobEntry) {
-    await ctx.reply("No active job to cancel.", mainKeyboard);
+
+  // Try local Map first
+  const filtered = [...jobs.entries()].filter(([, j]) => j.chatId === chatId);
+  const jobEntry = filtered.length ? filtered[filtered.length - 1] : null;
+
+  if (jobEntry) {
+    const [jobId, job] = jobEntry;
+    try {
+      await fetch(
+        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/runs/${job.runId}/cancel`,
+        { method: "POST", headers: githubHeaders() },
+      );
+    } catch (e) {
+      await ctx.reply(`⚠️ Cancel API failed: ${e.message}`, mainKeyboard);
+    }
+    jobs.delete(jobId);
+    await ctx.reply(
+      "✅ Cancel requested — runner will stop shortly.",
+      mainKeyboard,
+    );
     return;
   }
-  const [jobId, job] = jobEntry;
 
+  // Fallback: cancel latest non-completed GitHub run
   try {
+    const r = await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${WORKFLOW}/runs?per_page=5`,
+      { headers: githubHeaders() },
+    );
+    const data = await r.json();
+    const latest = (data.workflow_runs || []).find(
+      (w) => w.status !== "completed",
+    );
+    if (!latest) {
+      await ctx.reply("No active job to cancel.", mainKeyboard);
+      return;
+    }
     await fetch(
-      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/runs/${job.runId}/cancel`,
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/runs/${latest.id}/cancel`,
       { method: "POST", headers: githubHeaders() },
     );
-  } catch {}
-
-  jobs.delete(jobId);
-  await ctx.reply(
-    "Cancel requested — GitHub runner will stop shortly.",
-    mainKeyboard,
-  );
+    await ctx.reply(
+      `✅ Cancelled latest run: ${latest.display_title || latest.name || latest.id}`,
+      mainKeyboard,
+    );
+  } catch (e) {
+    await ctx.reply(`❌ Failed to cancel: ${e.message}`, mainKeyboard);
+  }
 }
 
 bot.action("action:debug", async (ctx) => {
-  await ctx.answerCbQuery();
-  await handleDebug(ctx);
+  try {
+    await ctx.answerCbQuery({ text: "Running debug..." });
+    await handleDebug(ctx);
+  } catch (err) {
+    console.log(chalk.bold("debug error"), chalk.white(err.message));
+    await ctx.reply(`❌ Debug failed: ${err.message}`);
+  }
 });
 bot.action("action:jobs", async (ctx) => {
-  await ctx.answerCbQuery();
-  await handleJobs(ctx);
+  try {
+    await ctx.answerCbQuery({ text: "Fetching jobs..." });
+    await handleJobs(ctx);
+  } catch (err) {
+    console.log(chalk.bold("jobs error"), chalk.white(err.message));
+    await ctx.reply(`❌ Jobs check failed: ${err.message}`);
+  }
 });
 bot.action("action:cancel", async (ctx) => {
-  await ctx.answerCbQuery();
-  await handleCancel(ctx);
+  try {
+    await ctx.answerCbQuery({ text: "Cancelling..." });
+    await handleCancel(ctx);
+  } catch (err) {
+    console.log(chalk.bold("cancel error"), chalk.white(err.message));
+    await ctx.reply(`❌ Cancel failed: ${err.message}`);
+  }
 });
 
 bot.on(message("text"), async (ctx) => {
   const chatId = String(ctx.chat.id);
   const text = ctx.message.text;
 
-  const fileId = extractGDriveId(text);
-  if (!fileId) {
+  const fileIds = extractGDriveIds(text);
+  if (fileIds.length === 0) {
     await ctx.reply("Send a Google Drive link to get started.", mainKeyboard);
     return;
   }
 
-  const statusMsg = await ctx.reply("Starting GitHub Actions worker");
+  const statusMsg = await ctx.reply(`Starting GitHub Actions worker for ${fileIds.length} link(s)`);
 
   const jobId = `${chatId}_${Date.now()}`;
 
   const inputs = {
     job_id: jobId,
-    file_id: fileId,
+    file_id: fileIds.join(","),
     chat_id: chatId,
     msg_id: String(statusMsg.message_id),
     callback_url: process.env.CALLBACK_URL || "",
@@ -420,7 +493,7 @@ bot.on(message("text"), async (ctx) => {
 
   jobs.set(jobId, {
     chatId,
-    fileId,
+    fileIds: fileIds.join(","),
     runId,
     msgId: statusMsg.message_id,
     startedAt: Date.now(),
