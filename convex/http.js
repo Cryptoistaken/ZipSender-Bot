@@ -37,7 +37,6 @@ http.route({
 
       if (action === "action:debug") {
         await ctx.runAction(internal.github.runDebug, { chatId });
-
       } else if (action === "action:jobs") {
         const jobs = await ctx.runQuery(internal.jobs.listJobs, {});
         const runs = await ctx.runAction(internal.github.listRecentRuns, {});
@@ -54,10 +53,15 @@ http.route({
 
         if (runs.length > 0) {
           const runLines = runs.map((r) => {
-            const icon = r.status === "completed"
-              ? (r.conclusion === "success" ? "ok" : "fail")
-              : "...";
-            const ageMin = Math.floor((Date.now() - new Date(r.createdAt)) / 60000);
+            const icon =
+              r.status === "completed"
+                ? r.conclusion === "success"
+                  ? "ok"
+                  : "fail"
+                : "...";
+            const ageMin = Math.floor(
+              (Date.now() - new Date(r.createdAt)) / 60000,
+            );
             return `  ${icon} ${r.displayTitle}  ${r.status}  ${ageMin}min`;
           });
           parts.push(`GitHub runs:\n${runLines.join("\n")}`);
@@ -68,15 +72,18 @@ http.route({
           chatId,
           text,
         });
-
       } else if (action === "action:cancel") {
         const jobs = await ctx.runQuery(internal.jobs.listJobs, {});
         const myJobs = jobs.filter((j) => j.chatId === chatId);
         const latest = myJobs[myJobs.length - 1];
 
         if (latest?.runId) {
-          await ctx.runAction(internal.github.cancelRun, { runId: latest.runId });
-          await ctx.runMutation(internal.jobs.deleteJob, { jobId: latest.jobId });
+          await ctx.runAction(internal.github.cancelRun, {
+            runId: latest.runId,
+          });
+          await ctx.runMutation(internal.jobs.deleteJob, {
+            jobId: latest.jobId,
+          });
           await ctx.runAction(internal.telegram.sendMessageWithKeyboard, {
             chatId,
             text: "Cancel requested - runner will stop shortly.",
@@ -85,7 +92,9 @@ http.route({
           const runs = await ctx.runAction(internal.github.listRecentRuns, {});
           const activeRun = runs.find((r) => r.status !== "completed");
           if (activeRun) {
-            await ctx.runAction(internal.github.cancelRun, { runId: activeRun.id });
+            await ctx.runAction(internal.github.cancelRun, {
+              runId: activeRun.id,
+            });
             await ctx.runAction(internal.telegram.sendMessageWithKeyboard, {
               chatId,
               text: `Cancelled: ${activeRun.displayTitle}`,
@@ -138,7 +147,7 @@ http.route({
 
     const statusMsgId = await ctx.runAction(internal.telegram.sendMessage, {
       chatId,
-      text: `Starting GitHub Actions worker for ${fileIds.length} link(s)...`,
+      text: `Starting GitHub Actions worker for ${fileIds.length} links`,
     });
 
     const jobId = `${chatId}_${Date.now()}`;
@@ -218,7 +227,10 @@ http.route({
           chatId: cid,
           text: message,
         });
-        await ctx.runMutation(internal.jobs.setMsgId, { jobId, msgId: newMsgId });
+        await ctx.runMutation(internal.jobs.setMsgId, {
+          jobId,
+          msgId: newMsgId,
+        });
       }
     } else if (event === "done") {
       if (job?.msgId) {
@@ -247,7 +259,10 @@ http.route({
           text: `Failed: ${message}`,
         });
       }
-      await ctx.runMutation(internal.jobs.finishJob, { jobId, status: "error" });
+      await ctx.runMutation(internal.jobs.finishJob, {
+        jobId,
+        status: "error",
+      });
     }
 
     return new Response("ok", { status: 200 });
