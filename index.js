@@ -395,7 +395,7 @@ const mainKeyboard = Markup.inlineKeyboard([
 
 bot.command("start", async (ctx) => {
   await ctx.reply(
-    "ZipSender ready\n\nSend a Google Drive link to a ZIP or video file.\nDownload and upload runs on GitHub Actions — this bot just coordinates.",
+    "Ready. Send a Google Drive link.",
     mainKeyboard,
   );
 });
@@ -494,9 +494,9 @@ async function handleJobs(ctx) {
         : j.fileId
           ? 1
           : 0;
-      return `  ${id.slice(0, 8)}  files: ${fileCount}  ${age}s ago`;
+      return `  ${id.slice(0, 8)}  ${fileCount} file${fileCount !== 1 ? "s" : ""}  ${age}s`;
     });
-    parts.push(`🤖 Local jobs (${jobs.size}):\n${localLines.join("\n")}`);
+    parts.push(`Local  ${jobs.size}:\n${localLines.join("\n")}`);
   }
 
   try {
@@ -517,16 +517,16 @@ async function handleJobs(ctx) {
         const ageMin = Math.floor(
           (Date.now() - new Date(w.created_at)) / 60000,
         );
-        return `  ${icon} ${w.display_title || w.name} — ${w.status} (${ageMin}m ago)`;
+        return `  ${icon} ${w.display_title || w.name}  ${w.status}  ${ageMin}min`;
       });
-      parts.push(`☁️ GitHub runs:\n${runLines.join("\n")}`);
+      parts.push(`GitHub  ${runs.length}:\n${runLines.join("\n")}`);
     }
   } catch (e) {
     parts.push(`⚠️ GitHub fetch failed: ${e.message}`);
   }
 
   if (parts.length === 0) {
-    await ctx.reply("No active jobs.", mainKeyboard);
+    await ctx.reply("Nothing running.", mainKeyboard);
     return;
   }
 
