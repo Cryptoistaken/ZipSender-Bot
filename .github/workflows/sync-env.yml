@@ -1,0 +1,36 @@
+name: Sync Env to Convex
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync GitHub secrets to Convex env vars
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Sync environment variables to Convex
+        run: |
+          set -e
+          npx convex env set BOT_TOKEN "${{ secrets.BOT_TOKEN }}"
+          npx convex env set OWNER_CHAT_ID "${{ secrets.OWNER_CHAT_ID }}"
+          npx convex env set AUNT_USERNAME "${{ secrets.AUNT_USERNAME }}"
+          npx convex env set GITHUB_TOKEN "${{ secrets.GH_PAT }}"
+          npx convex env set GITHUB_OWNER "${{ secrets.GH_OWNER }}"
+          npx convex env set GITHUB_REPO "${{ secrets.GH_REPO }}"
+          npx convex env set GITHUB_BRANCH "${{ secrets.GH_BRANCH }}"
+          npx convex env set CALLBACK_SECRET "${{ secrets.CALLBACK_SECRET }}"
+          echo "All environment variables synced."
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
