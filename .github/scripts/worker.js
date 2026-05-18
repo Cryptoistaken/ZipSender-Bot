@@ -11,7 +11,9 @@ const DEBUG = process.env.DEBUG === "true";
 const LOG_FILE = ".logs/worker.jsonl";
 
 function ensureLogDir() {
-  try { fs.mkdirSync(".logs", { recursive: true }); } catch {}
+  try {
+    fs.mkdirSync(".logs", { recursive: true });
+  } catch {}
 }
 
 function debugLog(level, source, message, data = null, err = null) {
@@ -37,15 +39,24 @@ function debugLog(level, source, message, data = null, err = null) {
     console.error("[LOG_ERR]", e.message);
   }
   if (DEBUG || level === "ERROR" || level === "WARN") {
-    const prefix = level === "ERROR" ? "[ERR]" : level === "WARN" ? "[WARN]" : "[DBG]";
+    const prefix =
+      level === "ERROR" ? "[ERR]" : level === "WARN" ? "[WARN]" : "[DBG]";
     console.log(prefix, source, message, data ? JSON.stringify(data) : "");
   }
 }
 
-function logInfo(source, msg, data) { debugLog("INFO", source, msg, data); }
-function logError(source, msg, err, data) { debugLog("ERROR", source, msg, data, err); }
-function logDebug(source, msg, data) { debugLog("DEBUG", source, msg, data); }
-function logWarn(source, msg, data) { debugLog("WARN", source, msg, data); }
+function logInfo(source, msg, data) {
+  debugLog("INFO", source, msg, data);
+}
+function logError(source, msg, err, data) {
+  debugLog("ERROR", source, msg, data, err);
+}
+function logDebug(source, msg, data) {
+  debugLog("DEBUG", source, msg, data);
+}
+function logWarn(source, msg, data) {
+  debugLog("WARN", source, msg, data);
+}
 
 function redactToken(tok) {
   if (!tok) return null;
@@ -265,7 +276,7 @@ async function downloadFile(fileId, destPath, quiet = false) {
       } else {
         reject(
           new Error(
-            "unrecognized file type — check the file is publicly shared on Drive",
+            "unrecognized file type check the file is publicly shared on Drive",
           ),
         );
       }
@@ -306,7 +317,10 @@ async function extractZip(zipPath, destDir) {
 }
 
 async function aiRenameFiles(fileNames) {
-  logDebug("aiRenameFiles:entry", "renaming", { count: fileNames.length, names: fileNames });
+  logDebug("aiRenameFiles:entry", "renaming", {
+    count: fileNames.length,
+    names: fileNames,
+  });
   const groq = new OpenAI({
     apiKey: GROQ_API_KEY,
     baseURL: "https://api.groq.com/openai/v1",
@@ -337,7 +351,9 @@ Return only a JSON array of the cleaned names in the same order. No markdown, no
 
   try {
     const text = completion.choices[0].message.content.trim();
-    logDebug("aiRenameFiles:raw", "LLM raw response", { raw: text.slice(0, 500) });
+    logDebug("aiRenameFiles:raw", "LLM raw response", {
+      raw: text.slice(0, 500),
+    });
     const parsed = JSON.parse(text);
     logInfo("aiRenameFiles:done", "rename succeeded", {
       input: fileNames,
@@ -369,7 +385,13 @@ async function initGramClient() {
   logInfo("initGramClient:done", "GramJS connected");
 }
 
-async function sendVideoToAunt(filePath, renamedName, fileIndex, total, quiet = false) {
+async function sendVideoToAunt(
+  filePath,
+  renamedName,
+  fileIndex,
+  total,
+  onProgress,
+) {
   logDebug("sendVideoToAunt:entry", `sending file ${fileIndex}/${total}`, {
     renamedName,
     filePath,
@@ -400,11 +422,16 @@ async function sendVideoToAunt(filePath, renamedName, fileIndex, total, quiet = 
         const bar = buildBar(pct);
         const msg = `Uploading ${fileIndex}/${total}\n${renamedName}\n${bar} ${pct}%\n${formatBytes(uploaded)} / ${formatBytes(fileSize)}  |  ${formatSpeed(speed)}`;
         console.log(msg.replace(/\n/g, "  "));
-        if (!quiet) await callback("progress", msg);
+        if (onProgress) onProgress(pct);
       }
     },
   });
-  logInfo("sendVideoToAunt:done", `file sent`, { renamedName, fileIndex, total, size: fileSize });
+  logInfo("sendVideoToAunt:done", `file sent`, {
+    renamedName,
+    fileIndex,
+    total,
+    size: fileSize,
+  });
 }
 
 async function main() {
@@ -425,12 +452,12 @@ async function main() {
 
   await callback(
     "progress",
-    `Found ${FILE_IDS.length} Drive link(s) — downloading in parallel...`,
+    `Found ${FILE_IDS.length} Drive links downloading in parallel`,
   );
 
   const downloadTasks = FILE_IDS.map((fileId, index) => {
     const tmpPath = `tmp/download_${index}_${Date.now()}.tmp`;
-    return downloadFile(fileId, tmpPath, true).then((result) => ({
+    return downloadFile(fileId, tmpPath, false).then((result) => ({
       result,
       tmpPath,
       fileId,
@@ -470,11 +497,14 @@ async function main() {
       const extractDir = `tmp/extracted_${index}_${Date.now()}/`;
       fs.renameSync(tmpPath, zipPath);
 
-      await callback("progress", "Extracting ZIP archive(s)...");
+      await callback("progress", "Extracting ZIP archives");
       try {
         fs.mkdirSync(extractDir, { recursive: true });
         const files = await extractZip(zipPath, extractDir);
-        logDebug("main:extract", `zip ${index} yielded ${files.length} video(s)`);
+        logDebug(
+          "main:extract",
+          `zip ${index} yielded ${files.length} video(s)`,
+        );
         allFiles.push(...files);
       } catch (err) {
         logError("main:extract", `extraction failed for index ${index}`, err);
@@ -492,7 +522,7 @@ async function main() {
 
   await callback(
     "progress",
-    `Found ${allFiles.length} file(s) total — running AI rename...`,
+    `Found ${allFiles.length} files total running AI rename.`,
   );
 
   try {
@@ -508,7 +538,7 @@ async function main() {
 
   await callback(
     "progress",
-    `Starting upload of ${allFiles.length} file(s) to Telegram...`,
+    `Starting upload of ${allFiles.length} file(s) to Telegram.`,
   );
 
   try {
@@ -518,38 +548,51 @@ async function main() {
     process.exit(1);
   }
 
-  for (let i = 0; i < allFiles.length; i++) {
-    const file = allFiles[i];
-    try {
-      await sendVideoToAunt(
-        file.fullPath,
-        file.renamedName,
-        i + 1,
-        allFiles.length,
-        false,
-      );
-    } catch (err) {
-      logError("main:upload", `upload failed for ${file.renamedName}`, err, {
-        fullPath: file.fullPath,
-        index: i + 1,
-      });
-      await callback(
-        "progress",
-        `Failed to send ${file.renamedName}: ${err.message}`,
-      );
-    }
-    fs.rmSync(
-      path.join(path.dirname(file.fullPath), file.renamedName),
-      { force: true },
-    );
+  const uploadProgress = new Array(allFiles.length).fill(0);
+  let lastUploadUpdate = 0;
+
+  async function reportUploadProgress(force = false) {
+    const totalPct = uploadProgress.reduce((a, b) => a + b, 0) / allFiles.length;
+    const now = Date.now();
+    if (!force && now - lastUploadUpdate < 3000) return;
+    lastUploadUpdate = now;
+    const completed = uploadProgress.filter(p => p >= 100).length;
+    const bar = buildBar(totalPct);
+    const msg = `Uploading ${completed}/${allFiles.length} files\n${bar} ${Math.round(totalPct)}%`;
+    await callback("progress", msg);
   }
+
+  const uploadTasks = allFiles.map((file, i) =>
+    sendVideoToAunt(
+      file.fullPath,
+      file.renamedName,
+      i + 1,
+      allFiles.length,
+      (pct) => {
+        uploadProgress[i] = pct;
+        reportUploadProgress();
+      }
+    )
+      .then(() => {
+        fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
+      })
+      .catch(async (err) => {
+        logError("main:upload", `upload failed for ${file.renamedName}`, err, {
+          fullPath: file.fullPath,
+          index: i + 1,
+        });
+        await callback("progress", `Failed to send ${file.renamedName}: ${err.message}`);
+      })
+  );
+
+  await Promise.all(uploadTasks);
 
   await gramClient.disconnect();
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   await callback(
     "done",
-    `Done — ${allFiles.length} file(s) sent\nTotal: ${formatBytes(totalSize)}\n${allFiles.map((f) => `  ${f.renamedName}`).join("\n")}`,
+    `Done ${allFiles.length} file(s) sent\nTotal: ${formatBytes(totalSize)}\n${allFiles.map((f) => `  ${f.renamedName}`).join("\n")}`,
   );
 }
 
