@@ -406,7 +406,6 @@ async function sendVideoToAunt(
   const session = new StringSession(TELEGRAM_SESSION);
   const client = sharedClient || new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
     connectionRetries: 5,
-    useWSS: true,
     retryDelay: 1000,
     baseLogger: silentLogger,
   });
@@ -428,7 +427,7 @@ async function sendVideoToAunt(
     await client.sendFile(AUNT_USERNAME, {
       file: renamedPath,
       forceDocument: true,
-      workers: 15,
+      workers: 8,
       progressCallback: async (progress) => {
         const pct = Math.floor(progress * 100);
         if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
@@ -612,7 +611,6 @@ async function main() {
   const session = new StringSession(TELEGRAM_SESSION);
   const uploadClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
     connectionRetries: 5,
-    useWSS: true,
     retryDelay: 1000,
     baseLogger: silentLogger,
   });
