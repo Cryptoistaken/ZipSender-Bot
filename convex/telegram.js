@@ -5,13 +5,16 @@ export const sendMessage = action({
   args: {
     chatId: v.string(),
     text: v.string(),
+    replyMarkup: v.optional(v.any()),
   },
   handler: async (_ctx, args) => {
     const base = `https://api.telegram.org/bot${process.env.BOT_TOKEN}`;
+    const body = { chat_id: args.chatId, text: args.text };
+    if (args.replyMarkup) body.reply_markup = args.replyMarkup;
     const res = await fetch(`${base}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: args.chatId, text: args.text }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(`Telegram sendMessage failed: ${data.description}`);
@@ -24,17 +27,20 @@ export const editMessage = action({
     chatId: v.string(),
     msgId: v.number(),
     text: v.string(),
+    replyMarkup: v.optional(v.any()),
   },
   handler: async (_ctx, args) => {
     const base = `https://api.telegram.org/bot${process.env.BOT_TOKEN}`;
+    const body = {
+      chat_id: args.chatId,
+      message_id: args.msgId,
+      text: args.text,
+    };
+    if (args.replyMarkup) body.reply_markup = args.replyMarkup;
     await fetch(`${base}/editMessageText`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: args.chatId,
-        message_id: args.msgId,
-        text: args.text,
-      }),
+      body: JSON.stringify(body),
     });
   },
 });

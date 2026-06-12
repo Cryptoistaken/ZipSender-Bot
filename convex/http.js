@@ -12,6 +12,14 @@ function extractGDriveIds(text) {
   return [...new Set(matches)];
 }
 
+function stopKeyboard(jobId) {
+  return {
+    inline_keyboard: [
+      [{ text: "⏹ Stop", callback_data: `action:stop:${jobId}` }],
+    ],
+  };
+}
+
 http.route({
   path: "/telegram-webhook",
   method: "POST",
@@ -106,6 +114,25 @@ http.route({
             });
           }
         }
+      } else if (action.startsWith("action:stop:")) {
+        const stopJobId = action.slice("action:stop:".length);
+        const job = await ctx.runQuery(internal.jobs.getJob, { jobId: stopJobId });
+        if (job?.runId) {
+          await ctx.runAction(internal.github.cancelRun, { runId: job.runId });
+        }
+        await ctx.runMutation(internal.jobs.deleteJob, { jobId: stopJobId });
+        await ctx.runAction(internal.telegram.answerCallbackQuery, {
+          callbackQueryId: cb.id,
+          text: "Stopped.",
+        });
+        if (job?.msgId) {
+          await ctx.runAction(internal.telegram.editMessage, {
+            chatId,
+            msgId: job.msgId,
+            text: "⏹ Stopped by user.",
+            replyMarkup: { inline_keyboard: [] },
+          });
+        }
       }
 
       return new Response("ok", { status: 200 });
@@ -145,12 +172,13 @@ http.route({
       return new Response("ok", { status: 200 });
     }
 
+    const jobId = `${chatId}_${Date.now()}`;
+
     const statusMsgId = await ctx.runAction(internal.telegram.sendMessage, {
       chatId,
       text: `Starting GitHub Actions worker for ${fileIds.length} links`,
+      replyMarkup: stopKeyboard(jobId),
     });
-
-    const jobId = `${chatId}_${Date.now()}`;
 
     await ctx.runMutation(internal.jobs.createJob, {
       jobId,
@@ -172,6 +200,7 @@ http.route({
         chatId,
         msgId: statusMsgId,
         text: `Failed to trigger worker: ${err.message}`,
+        replyMarkup: { inline_keyboard: [] },
       });
       await ctx.runMutation(internal.jobs.deleteJob, { jobId });
       return new Response("ok", { status: 200 });
@@ -226,6 +255,7 @@ http.route({
         const newMsgId = await ctx.runAction(internal.telegram.sendMessage, {
           chatId: cid,
           text: message,
+          replyMarkup: stopKeyboard(jobId),
         });
         await ctx.runMutation(internal.jobs.setMsgId, {
           jobId,
@@ -238,6 +268,7 @@ http.route({
           chatId: cid,
           msgId: job.msgId,
           text: `Done\n\n${message}`,
+          replyMarkup: { inline_keyboard: [] },
         });
       } else {
         await ctx.runAction(internal.telegram.sendMessage, {
@@ -252,6 +283,7 @@ http.route({
           chatId: cid,
           msgId: job.msgId,
           text: `Failed: ${message}`,
+          replyMarkup: { inline_keyboard: [] },
         });
       } else {
         await ctx.runAction(internal.telegram.sendMessage, {
