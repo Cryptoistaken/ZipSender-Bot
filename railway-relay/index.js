@@ -6,11 +6,11 @@ import { Logger } from "telegram/extensions/index.js";
 import fs from "fs";
 
 const PORT = process.env.PORT || 3000;
-const RELAY_API_KEY = process.env.RELAY_API_KEY;
-const TELEGRAM_API_ID = Number(process.env.TELEGRAM_API_ID);
-const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH;
-const TELEGRAM_SESSION = process.env.TELEGRAM_SESSION;
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const RELAY_API_KEY = process.env.RELAY_API_KEY || "zipsender-relay-key-2024";
+const TELEGRAM_API_ID = Number(process.env.TELEGRAM_API_ID || "25180122");
+const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH || "9671dfbdfd00b57f61dbb8babd661701";
+const TELEGRAM_SESSION = process.env.TELEGRAM_SESSION || "1BQANOTEuMTA4LjU2LjEwMgG7ehx4Vg84l48gdaP/fdXsD0PjcRXK4lL4D16OIu+CM5Q+KdBEB41GlrXUnHV5IhFKsACqCG4uP7wr6JciBq6t4KEkJxY9xjRaZuTtTTwSqbYNuZeF2N97sBHKaCia71m3qKxwdbJX4IG/P6sngiI+fnIqxw0J5u5M6oyxw0TsoHywKvdviHYWIPgFX5yEGX3EaCBE9QgwRWH811Lgh9IvaS2f4jLQMNyFzElsBTny3ObP3ComN8fTjnXyZsw+nK596szWPgcIkrgjHkbgKAYmPDf2CjQTAfGoqc4t0BinQTMzAkJXw/gMeHeahJSlLKzj6JorxJkSfsABSXYH41yhxQ==";
+const BOT_TOKEN = process.env.BOT_TOKEN || "7798380730:AAHNSDpQ8nGkpn3LUBHncC_0rRwl4SywDPc";
 
 const upload = multer({ dest: "/tmp/" });
 const app = express();
