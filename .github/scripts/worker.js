@@ -102,6 +102,28 @@ const TELEGRAM_SESSION = process.env.TELEGRAM_SESSION;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+const PROXY_SOCKS_URL = process.env.PROXY_SOCKS_URL || "";
+
+function parseSocksProxy(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "socks5:" && u.protocol !== "socks5h:") throw new Error("only socks5 supported");
+    return {
+      socksType: 5,
+      ip: u.hostname,
+      port: Number(u.port) || 1080,
+      username: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+    };
+  } catch (e) {
+    logWarn("parseSocksProxy", `invalid PROXY_SOCKS_URL: ${e.message}`);
+    return null;
+  }
+}
+
+const SOCKS_PROXY = parseSocksProxy(PROXY_SOCKS_URL);
+
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"];
 
 function formatBytes(bytes) {
@@ -408,6 +430,7 @@ async function sendVideoToAunt(
     connectionRetries: 5,
     retryDelay: 1000,
     baseLogger: silentLogger,
+    ...(SOCKS_PROXY ? { proxy: SOCKS_PROXY } : {}),
   });
 
   const origWarn = console.warn;
@@ -434,7 +457,7 @@ async function sendVideoToAunt(
     await client.sendFile(AUNT_USERNAME, {
       file: renamedPath,
       forceDocument: true,
-      workers: 1,
+      workers: 15,
       progressCallback: async (progress) => {
         const pct = Math.floor(progress * 100);
         if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
@@ -627,6 +650,7 @@ async function main() {
     connectionRetries: 5,
     retryDelay: 1000,
     baseLogger: silentLogger,
+    ...(SOCKS_PROXY ? { proxy: SOCKS_PROXY } : {}),
   });
 
   const origWarn2 = console.warn;
