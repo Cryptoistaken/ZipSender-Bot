@@ -6,9 +6,22 @@ import { Logger } from "telegram/extensions/index.js";
 import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
+import { SocksClient } from "socks";
 
 const DEBUG = process.env.DEBUG === "true";
 const LOG_FILE = ".logs/worker.jsonl";
+
+function ts() {
+  const d = new Date();
+  return d.toISOString().slice(11, 23);
+}
+
+const origConsoleLog = console.log;
+const origConsoleWarn = console.warn;
+const origConsoleError = console.error;
+console.log = (...args) => origConsoleLog(`[${ts()}]`, ...args);
+console.warn = (...args) => origConsoleWarn(`[${ts()}]`, ...args);
+console.error = (...args) => origConsoleError(`[${ts()}]`, ...args);
 
 function ensureLogDir() {
   try {
@@ -123,6 +136,23 @@ function parseSocksProxy(url) {
 }
 
 const SOCKS_PROXY = parseSocksProxy(PROXY_SOCKS_URL);
+
+async function testSocksProxy(proxy) {
+  if (!proxy) { console.log("No proxy configured"); return true; }
+  console.log(`Testing SOCKS5 proxy ${proxy.ip}:${proxy.port}...`);
+  try {
+    await SocksClient.createConnection({
+      proxy: { host: proxy.ip, port: proxy.port, type: proxy.socksType, userId: proxy.username, password: proxy.password },
+      destination: { host: "91.108.56.124", port: 443 },
+      timeout: 10000,
+    });
+    console.log("Proxy OK");
+    return true;
+  } catch (e) {
+    console.error(`Proxy FAILED: ${e.message}`);
+    return false;
+  }
+}
 
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"];
 
@@ -492,6 +522,14 @@ async function main() {
     job_id: JOB_ID,
     callback_url_set: !!CALLBACK_URL,
   });
+
+  if (SOCKS_PROXY) {
+    const proxyOk = await testSocksProxy(SOCKS_PROXY);
+    if (!proxyOk) {
+      console.error("Proxy test failed — aborting");
+      process.exit(1);
+    }
+  }
   if (FILE_IDS.length === 0 || !CHAT_ID || !JOB_ID) {
     console.error(
       "missing required inputs: INPUT_FILE_ID, INPUT_CHAT_ID, INPUT_JOB_ID",
