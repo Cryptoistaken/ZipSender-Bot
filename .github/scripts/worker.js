@@ -412,14 +412,21 @@ async function sendVideoToAunt(
 
   const origWarn = console.warn;
   const origError = console.error;
+  const origLog = console.log;
   const filterGramJS = (...args) => {
     const txt = args.join(" ");
     if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
     if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn.apply(console, args);
     else origError.apply(console, args);
   };
+  const filterGramJSLog = (...args) => {
+    const txt = args.join(" ");
+    if (txt.includes("sender already") || txt.includes("reconnecting")) return;
+    origLog.apply(console, args);
+  };
   console.warn = filterGramJS;
   console.error = filterGramJS;
+  console.log = filterGramJSLog;
 
   try {
     if (!sharedClient) await client.connect();
@@ -595,12 +602,14 @@ async function main() {
     try {
       const lines = [];
       uploadStates.forEach((s) => {
+        if (s.pct === 0 && s.uploaded === 0) return;
         const bar = buildBar(s.pct);
         const spec = s.total > 0
           ? `${s.pct}%  ${formatBytesShort(s.uploaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
           : `${formatBytesShort(s.uploaded)}  ${formatSpeedShort(s.speed)}`;
         lines.push(`${bar}  ${spec}`);
       });
+      if (lines.length === 0) return;
       await callback("progress", lines.join("\n"));
     } finally {
       isUploadingReport = false;
@@ -617,14 +626,21 @@ async function main() {
 
   const origWarn2 = console.warn;
   const origError2 = console.error;
+  const origLog2 = console.log;
   const filterGramJS2 = (...args) => {
     const txt = args.join(" ");
     if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
     if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn2.apply(console, args);
     else origError2.apply(console, args);
   };
+  const filterGramJSLog2 = (...args) => {
+    const txt = args.join(" ");
+    if (txt.includes("sender already") || txt.includes("reconnecting")) return;
+    origLog2.apply(console, args);
+  };
   console.warn = filterGramJS2;
   console.error = filterGramJS2;
+  console.log = filterGramJSLog2;
 
   try {
     await uploadClient.connect();
