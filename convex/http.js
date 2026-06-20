@@ -34,7 +34,7 @@ http.route({
 
       await ctx.runAction(internal.telegram.answerCallbackQuery, {
         callbackQueryId: cb.id,
-        text: "Working...",
+        text: "Working",
       });
 
       if (fromId !== ownerChatId) {
@@ -92,7 +92,7 @@ http.route({
           });
           await ctx.runAction(internal.telegram.sendMessageWithKeyboard, {
             chatId,
-            text: "Cancel requested - runner will stop shortly.",
+            text: "Cancelling job.",
           });
         } else {
           const runs = await ctx.runAction(internal.github.listRecentRuns, {});
@@ -156,7 +156,7 @@ http.route({
     if (text === "/start" || text.startsWith("/start ")) {
       await ctx.runAction(internal.telegram.sendMessageWithKeyboard, {
         chatId,
-        text: "Ready. Send a Google Drive link.",
+        text: "Ready. Send a Google Drive link or file.",
       });
       return new Response("ok", { status: 200 });
     }
@@ -165,7 +165,7 @@ http.route({
     if (fileIds.length === 0) {
       await ctx.runAction(internal.telegram.sendMessageWithKeyboard, {
         chatId,
-        text: "Send a Google Drive link to get started.",
+        text: "Send a Google Drive link or file to get started.",
       });
       return new Response("ok", { status: 200 });
     }
@@ -174,7 +174,7 @@ http.route({
 
     const statusMsgId = await ctx.runAction(internal.telegram.sendMessage, {
       chatId,
-      text: `Starting GitHub Actions worker for ${fileIds.length} links`,
+      text: `Starting GitHub Actions worker for ${fileIds.length} files`,
       replyMarkup: stopKeyboard(jobId),
     });
 
@@ -217,7 +217,7 @@ http.route({
     await ctx.runAction(internal.telegram.editMessage, {
       chatId,
       msgId: statusMsgId,
-      text: "Running...",
+      text: "Running",
       replyMarkup: stopKeyboard(jobId),
     });
 
