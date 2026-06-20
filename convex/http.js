@@ -217,7 +217,8 @@ http.route({
     await ctx.runAction(internal.telegram.editMessage, {
       chatId,
       msgId: statusMsgId,
-      text: "Running...",
+      text: "Running",
+      replyMarkup: stopKeyboard(jobId),
     });
 
     return new Response("ok", { status: 200 });
@@ -248,6 +249,7 @@ http.route({
           chatId: cid,
           msgId: job.msgId,
           text: message,
+          replyMarkup: stopKeyboard(jobId),
         });
       } else {
         const newMsgId = await ctx.runAction(internal.telegram.sendMessage, {
