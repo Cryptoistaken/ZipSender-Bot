@@ -1,0 +1,2 @@
+{"ts":"2026-06-20T21:15:18.346Z","level":"INFO","source":"worker:startup","msg":"worker starting","pid":13072,"data":{"node":"v24.13.1","platform":"win32","env":{"FILE_IDS":[],"MSG_ID":null,"CALLBACK_URL_SET":false,"TELEGRAM_API_ID_SET":false,"TELEGRAM_API_HASH_SET":false,"TELEGRAM_SESSION_SET":false,"BOT_TOKEN_SET":false,"BOT_TOKEN_PREVIEW":null,"GROQ_API_KEY_SET":false,"GROQ_API_KEY_PREVIEW":null}}}
+{"ts":"2026-06-20T21:15:18.350Z","level":"INFO","source":"main:entry","msg":"main() starting","pid":13072,"data":{"file_ids_count":0,"callback_url_set":false}}
