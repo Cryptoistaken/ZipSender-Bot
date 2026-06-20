@@ -1,12 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions/index.js";
-import { Logger } from "telegram/extensions/index.js";
 import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
-import { SocksClient } from "socks";
 
 const DEBUG = process.env.DEBUG === "true";
 const LOG_FILE = ".logs/worker.jsonl";
@@ -115,44 +111,8 @@ const TELEGRAM_SESSION = process.env.TELEGRAM_SESSION;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-const PROXY_SOCKS_URL = process.env.PROXY_SOCKS_URL || "";
-
-function parseSocksProxy(url) {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    if (u.protocol !== "socks5:" && u.protocol !== "socks5h:") throw new Error("only socks5 supported");
-    return {
-      socksType: 5,
-      ip: u.hostname,
-      port: Number(u.port) || 1080,
-      username: decodeURIComponent(u.username),
-      password: decodeURIComponent(u.password),
-    };
-  } catch (e) {
-    logWarn("parseSocksProxy", `invalid PROXY_SOCKS_URL: ${e.message}`);
-    return null;
-  }
-}
-
-const SOCKS_PROXY = parseSocksProxy(PROXY_SOCKS_URL);
-
-async function testSocksProxy(proxy) {
-  if (!proxy) { console.log("No proxy configured"); return true; }
-  console.log(`Testing SOCKS5 proxy ${proxy.ip}:${proxy.port}...`);
-  try {
-    await SocksClient.createConnection({
-      proxy: { host: proxy.ip, port: proxy.port, type: proxy.socksType, userId: proxy.username, password: proxy.password },
-      destination: { host: "91.108.56.124", port: 443 },
-      timeout: 10000,
-    });
-    console.log("Proxy OK");
-    return true;
-  } catch (e) {
-    console.error(`Proxy FAILED: ${e.message}`);
-    return false;
-  }
-}
+const RELAY_URL = process.env.RELAY_URL || "";
+const RELAY_API_KEY = process.env.RELAY_API_KEY || "";
 
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"];
 
@@ -436,7 +396,6 @@ async function sendVideoToAunt(
   fileIndex,
   total,
   onProgress,
-  sharedClient,
 ) {
   logDebug("sendVideoToAunt:entry", `sending file ${fileIndex}/${total}`, {
     renamedName,
@@ -445,74 +404,41 @@ async function sendVideoToAunt(
   });
   const dir = path.dirname(filePath);
   const renamedPath = path.join(dir, renamedName);
-
   if (filePath !== renamedPath && fs.existsSync(filePath)) {
     fs.renameSync(filePath, renamedPath);
   }
 
   const fileSize = fs.statSync(renamedPath).size;
   const startTime = Date.now();
-  let lastPct = -1;
 
-  const silentLogger = new Logger("none");
-  const session = new StringSession(TELEGRAM_SESSION);
-  const client = sharedClient || new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
-    connectionRetries: 5,
-    retryDelay: 1000,
-    baseLogger: silentLogger,
-    ...(SOCKS_PROXY ? { proxy: SOCKS_PROXY } : {}),
+  const formData = new FormData();
+  formData.append("file", new Blob([fs.readFileSync(renamedPath)]), renamedName);
+  formData.append("auntUsername", AUNT_USERNAME);
+  formData.append("chatId", CHAT_ID);
+  formData.append("msgId", String(MSG_ID || ""));
+  formData.append("renamedName", renamedName);
+  formData.append("callbackUrl", CALLBACK_URL);
+  formData.append("callbackSecret", CALLBACK_SECRET);
+
+  const res = await fetch(`${RELAY_URL}/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${RELAY_API_KEY}`, "x-job-id": JOB_ID },
+    body: formData,
   });
 
-  const origWarn = console.warn;
-  const origError = console.error;
-  const origLog = console.log;
-  const filterGramJS = (...args) => {
-    const txt = args.join(" ");
-    if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
-    if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn.apply(console, args);
-    else origError.apply(console, args);
-  };
-  const filterGramJSLog = (...args) => {
-    const txt = args.join(" ");
-    if (txt.includes("sender already") || txt.includes("reconnecting")) return;
-    origLog.apply(console, args);
-  };
-  console.warn = filterGramJS;
-  console.error = filterGramJS;
-  console.log = filterGramJSLog;
-
-  try {
-    if (!sharedClient) await client.connect();
-
-    await client.sendFile(AUNT_USERNAME, {
-      file: renamedPath,
-      forceDocument: true,
-      workers: 15,
-      progressCallback: async (progress) => {
-        const pct = Math.floor(progress * 100);
-        if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
-          lastPct = pct;
-          const elapsed = (Date.now() - startTime) / 1000 || 0.001;
-          const speed = (progress * fileSize) / elapsed;
-          const uploaded = progress * fileSize;
-          if (onProgress) onProgress(pct, uploaded, fileSize, speed);
-        }
-      },
-    });
-    logInfo("sendVideoToAunt:done", `file sent`, {
-      renamedName,
-      fileIndex,
-      total,
-      size: fileSize,
-    });
-  } finally {
-    console.warn = origWarn;
-    console.error = origError;
-    if (!sharedClient) {
-      await client.disconnect();
-      await client.destroy();
-    }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "unknown");
+    throw new Error(`relay returned ${res.status}: ${errText}`);
   }
+
+  const elapsed = (Date.now() - startTime) / 1000;
+  if (onProgress) onProgress(100, fileSize, fileSize, fileSize / elapsed);
+  logInfo("sendVideoToAunt:done", `file sent to relay`, {
+    renamedName,
+    fileIndex,
+    total,
+    size: fileSize,
+  });
 }
 
 async function main() {
@@ -523,13 +449,6 @@ async function main() {
     callback_url_set: !!CALLBACK_URL,
   });
 
-  if (SOCKS_PROXY) {
-    const proxyOk = await testSocksProxy(SOCKS_PROXY);
-    if (!proxyOk) {
-      console.error("Proxy test failed — aborting");
-      process.exit(1);
-    }
-  }
   if (FILE_IDS.length === 0 || !CHAT_ID || !JOB_ID) {
     console.error(
       "missing required inputs: INPUT_FILE_ID, INPUT_CHAT_ID, INPUT_JOB_ID",
@@ -682,75 +601,25 @@ async function main() {
     }
   }
 
-  const silentLogger = new Logger("none");
-  const session = new StringSession(TELEGRAM_SESSION);
-  const uploadClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
-    connectionRetries: 5,
-    retryDelay: 1000,
-    baseLogger: silentLogger,
-    ...(SOCKS_PROXY ? { proxy: SOCKS_PROXY } : {}),
-  });
+  await callback("progress", "Sending to relay...");
 
-  const origWarn2 = console.warn;
-  const origError2 = console.error;
-  const origLog2 = console.log;
-  const filterGramJS2 = (...args) => {
-    const txt = args.join(" ");
-    if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
-    if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn2.apply(console, args);
-    else origError2.apply(console, args);
-  };
-  const filterGramJSLog2 = (...args) => {
-    const txt = args.join(" ");
-    if (txt.includes("sender already") || txt.includes("reconnecting")) return;
-    origLog2.apply(console, args);
-  };
-  console.warn = filterGramJS2;
-  console.error = filterGramJS2;
-  console.log = filterGramJSLog2;
-
-  try {
-    await uploadClient.connect();
-
-    await reportUploads(true);
-
-    for (let i = 0; i < allFiles.length; i++) {
+  for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
     try {
-      await sendVideoToAunt(
-        file.fullPath,
-        file.renamedName,
-        i + 1,
-        allFiles.length,
-        (pct, uploaded, total, speed) => {
-          uploadStates[i] = { ...uploadStates[i], pct, uploaded, total, speed };
-          reportUploads();
-        },
-        uploadClient,
-      );
+      await sendVideoToAunt(file.fullPath, file.renamedName, i + 1, allFiles.length);
       uploadStates[i].done = true;
       fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
-      await reportUploads(true);
     } catch (err) {
       logError("main:upload", `upload failed for ${file.renamedName}`, err, {
-        fullPath: file.fullPath,
-        index: i + 1,
+        fullPath: file.fullPath, index: i + 1,
       });
       await callback("progress", `Failed ${file.renamedName}: ${err.message}`);
     }
   }
 
-  } finally {
-    await uploadClient.disconnect();
-    await uploadClient.destroy();
-    console.warn = origWarn2;
-    console.error = origError2;
-  }
-  await reportUploads(true);
-
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   const fileList = allFiles.map((f) => `  ${f.renamedName}`).join("\n");
-  await callback("done", `Done ${allFiles.length}  ${formatBytesShort(totalSize)}\n${fileList}`);
+  await callback("done", `Sent ${allFiles.length} to relay  ${formatBytesShort(totalSize)}\n${fileList}`);
 }
 
 main().catch(async (err) => {
