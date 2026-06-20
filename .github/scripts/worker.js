@@ -433,7 +433,7 @@ async function sendVideoToAunt(
 
     await client.sendFile(AUNT_USERNAME, {
       file: renamedPath,
-      forceDocument: false,
+      forceDocument: true,
       workers: 1,
       progressCallback: async (progress) => {
         const pct = Math.floor(progress * 100);
@@ -588,7 +588,7 @@ async function main() {
     console.log("groq error, using original names:", err.message);
   }
 
-  const uploadStates = allFiles.map((f) => ({ pct: 0, uploaded: 0, total: f.size, speed: 0 }));
+  const uploadStates = allFiles.map((f) => ({ pct: 0, uploaded: 0, total: f.size, speed: 0, done: false }));
   let lastUploadReport = 0;
   let isUploadingReport = false;
 
@@ -600,16 +600,21 @@ async function main() {
     isUploadingReport = true;
 
     try {
-      const lines = [];
-      uploadStates.forEach((s) => {
-        if (s.pct === 0 && s.uploaded === 0) return;
-        const bar = buildBar(s.pct);
-        const spec = s.total > 0
-          ? `${s.pct}%  ${formatBytesShort(s.uploaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
-          : `${formatBytesShort(s.uploaded)}  ${formatSpeedShort(s.speed)}`;
-        lines.push(`${bar}  ${spec}`);
+      const lines = [`Uploading ${allFiles.length} file(s)\n`];
+      uploadStates.forEach((s, i) => {
+        const name = allFiles[i].renamedName;
+        if (s.done) {
+          lines.push(`${name}\n  Done`);
+        } else if (s.pct === 0 && s.uploaded === 0) {
+          return;
+        } else {
+          const bar = buildBar(s.pct);
+          const spec = s.total > 0
+            ? `${s.pct}%  ${formatBytesShort(s.uploaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
+            : `${formatBytesShort(s.uploaded)}  ${formatSpeedShort(s.speed)}`;
+          lines.push(`${name}\n  ${bar}  ${spec}`);
+        }
       });
-      if (lines.length === 0) return;
       await callback("progress", lines.join("\n"));
     } finally {
       isUploadingReport = false;
@@ -645,6 +650,8 @@ async function main() {
   try {
     await uploadClient.connect();
 
+    await reportUploads(true);
+
     for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
     try {
@@ -654,12 +661,14 @@ async function main() {
         i + 1,
         allFiles.length,
         (pct, uploaded, total, speed) => {
-          uploadStates[i] = { pct, uploaded, total, speed };
+          uploadStates[i] = { ...uploadStates[i], pct, uploaded, total, speed };
           reportUploads();
         },
         uploadClient,
       );
+      uploadStates[i].done = true;
       fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
+      await reportUploads(true);
     } catch (err) {
       logError("main:upload", `upload failed for ${file.renamedName}`, err, {
         fullPath: file.fullPath,
