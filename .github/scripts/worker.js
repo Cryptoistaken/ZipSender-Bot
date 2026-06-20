@@ -3,6 +3,7 @@ import path from "path";
 import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
+import FormData from "form-data";
 
 const DEBUG = process.env.DEBUG === "true";
 const LOG_FILE = ".logs/worker.jsonl";
@@ -410,26 +411,35 @@ async function sendVideoToAunt(
 
   const fileSize = fs.statSync(renamedPath).size;
   const startTime = Date.now();
+  let lastPct = -1;
 
-  const formData = new FormData();
-  formData.append("file", new Blob([fs.readFileSync(renamedPath)]), renamedName);
-  formData.append("auntUsername", AUNT_USERNAME);
-  formData.append("chatId", CHAT_ID);
-  formData.append("msgId", String(MSG_ID || ""));
-  formData.append("renamedName", renamedName);
-  formData.append("callbackUrl", CALLBACK_URL);
-  formData.append("callbackSecret", CALLBACK_SECRET);
+  const form = new FormData();
+  form.append("file", fs.createReadStream(renamedPath), renamedName);
+  form.append("auntUsername", AUNT_USERNAME);
+  form.append("chatId", CHAT_ID);
+  form.append("msgId", String(MSG_ID || ""));
+  form.append("renamedName", renamedName);
+  form.append("callbackUrl", CALLBACK_URL);
+  form.append("callbackSecret", CALLBACK_SECRET);
 
-  const res = await fetch(`${RELAY_URL}/upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${RELAY_API_KEY}`, "x-job-id": JOB_ID },
-    body: formData,
+  const res = await axios.post(`${RELAY_URL}/upload`, form, {
+    headers: {
+      Authorization: `Bearer ${RELAY_API_KEY}`,
+      "x-job-id": JOB_ID,
+      ...form.getHeaders(),
+    },
+    maxBodyLength: Infinity,
+    onUploadProgress: (e) => {
+      if (!e.total) return;
+      const pct = Math.floor((e.loaded / e.total) * 100);
+      if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
+        lastPct = pct;
+        const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+        const speed = e.loaded / elapsed;
+        if (onProgress) onProgress(pct, e.loaded, e.total, speed);
+      }
+    },
   });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "unknown");
-    throw new Error(`relay returned ${res.status}: ${errText}`);
-  }
 
   const elapsed = (Date.now() - startTime) / 1000;
   if (onProgress) onProgress(100, fileSize, fileSize, fileSize / elapsed);
@@ -619,7 +629,7 @@ async function main() {
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   const fileList = allFiles.map((f) => `  ${f.renamedName}`).join("\n");
-  await callback("done", `Sent ${allFiles.length} to relay  ${formatBytesShort(totalSize)}\n${fileList}`);
+  console.log(`Sent ${allFiles.length} files to relay  ${formatBytesShort(totalSize)}\n${fileList}`);
 }
 
 main().catch(async (err) => {

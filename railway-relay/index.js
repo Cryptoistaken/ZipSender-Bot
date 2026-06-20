@@ -48,18 +48,19 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
 
   let editQueue = Promise.resolve();
   function queueEdit(text) {
-    editQueue = editQueue.then(() => editOrSend(text));
+    editQueue = editQueue.then(() => editOrSend(text).catch(e => console.error("editOrSend err:", e.message)));
   }
 
   async function editOrSend(text) {
     if (!BOT_TOKEN || !chatId) return;
     try {
       if (statusMsgId) {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+        const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: chatId, message_id: statusMsgId, text }),
         });
+        if (!res.ok) console.error("edit failed:", res.status, await res.text().catch(()=>""));
       } else {
         const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           method: "POST",
@@ -68,8 +69,9 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
         });
         const data = await res.json();
         if (data.ok) statusMsgId = data.result.message_id;
+        else console.error("send failed:", res.status, JSON.stringify(data));
       }
-    } catch {}
+    } catch (e) { console.error("editOrSend exception:", e.message); }
   }
 
   async function doCallback(event, message) {
