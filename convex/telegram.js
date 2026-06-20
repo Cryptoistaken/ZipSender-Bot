@@ -54,7 +54,6 @@ export const sendMessageWithKeyboard = action({
     const base = `https://api.telegram.org/bot${process.env.BOT_TOKEN}`;
     const keyboard = {
       inline_keyboard: [
-        [{ text: "Run Debug", callback_data: "action:debug" }],
         [
           { text: "Active Jobs", callback_data: "action:jobs" },
           { text: "Cancel Latest", callback_data: "action:cancel" },

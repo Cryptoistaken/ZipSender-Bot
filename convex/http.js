@@ -43,9 +43,7 @@ http.route({
 
       const action = cb.data;
 
-      if (action === "action:debug") {
-        await ctx.runAction(internal.github.runDebug, { chatId });
-      } else if (action === "action:jobs") {
+      if (action === "action:jobs") {
         const jobs = await ctx.runQuery(internal.jobs.listJobs, {});
         const runs = await ctx.runAction(internal.github.listRecentRuns, {});
         const parts = [];
@@ -276,7 +274,7 @@ http.route({
           text: `Done\n\n${message}`,
         });
       }
-      await ctx.runMutation(internal.jobs.finishJob, { jobId, status: "done" });
+      await ctx.runMutation(internal.jobs.finishJob, { jobId });
     } else if (event === "error") {
       if (job?.msgId) {
         await ctx.runAction(internal.telegram.editMessage, {
@@ -293,7 +291,6 @@ http.route({
       }
       await ctx.runMutation(internal.jobs.finishJob, {
         jobId,
-        status: "error",
       });
     }
 

@@ -71,7 +71,6 @@ export const setWorkerActive = mutation({
 export const finishJob = mutation({
   args: {
     jobId: v.string(),
-    status: v.string(),
   },
   handler: async (ctx, args) => {
     const job = await ctx.db

@@ -1,6 +1,5 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
 
 function githubHeaders() {
   return {
@@ -123,81 +122,3 @@ export const listRecentRuns = action({
   },
 });
 
-export const runDebug = action({
-  args: { chatId: v.string() },
-  handler: async (ctx, args) => {
-    const owner = GH_OWNER();
-    const repo = GH_REPO();
-    const branch = GH_BRANCH();
-    const token = process.env.GITHUB_TOKEN;
-    const lines = [];
-
-    const missing = [];
-    if (!token) missing.push("GITHUB_TOKEN");
-    if (!owner) missing.push("GITHUB_OWNER");
-    if (!repo) missing.push("GITHUB_REPO");
-    if (missing.length) {
-      await ctx.runAction(internal.telegram.sendMessage, {
-        chatId: args.chatId,
-        text: `Missing Convex env vars: ${missing.join(", ")}`,
-      });
-      return;
-    }
-    lines.push(`env vars ok`);
-    lines.push(`  owner:  ${owner}`);
-    lines.push(`  repo:   ${repo}`);
-    lines.push(`  branch: ${branch}`);
-    lines.push(`  token:  ${token.slice(0, 10)}...`);
-
-    try {
-      const r = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-        headers: githubHeaders(),
-      });
-      const data = await r.json();
-      if (r.status === 404) {
-        lines.push(`repo not found`);
-      } else if (r.status === 401 || r.status === 403) {
-        lines.push(`token rejected (${r.status})`);
-      } else {
-        lines.push(`repo: ${data.full_name} (${data.private ? "private" : "public"})`);
-      }
-    } catch (e) {
-      lines.push(`GitHub API unreachable: ${e.message}`);
-    }
-
-    try {
-      const r = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/actions/workflows`,
-        { headers: githubHeaders() }
-      );
-      const data = await r.json();
-      const found = (data.workflows || []).find(
-        (w) => w.path === `.github/workflows/${WORKFLOW}`
-      );
-      if (!found) {
-        lines.push(`workflow .github/workflows/${WORKFLOW} not found`);
-      } else {
-        lines.push(`workflow: ${found.name} (state: ${found.state})`);
-        if (found.state !== "active") lines.push(`   state is "${found.state}" - enable it in GitHub UI`);
-      }
-    } catch (e) {
-      lines.push(`could not list workflows: ${e.message}`);
-    }
-
-    try {
-      const r = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/branches/${branch}`,
-        { headers: githubHeaders() }
-      );
-      if (r.status === 404) lines.push(`branch "${branch}" not found`);
-      else lines.push(`branch "${branch}": ok`);
-    } catch (e) {
-      lines.push(`could not check branch: ${e.message}`);
-    }
-
-    await ctx.runAction(internal.telegram.sendMessage, {
-      chatId: args.chatId,
-      text: lines.join("\n"),
-    });
-  },
-});

@@ -266,11 +266,10 @@ async function downloadFile(fileId, destPath, onProgress) {
         buf[2] === 0x46 &&
         buf[3] === 0x46;
       const isMp4 =
-        (buf[4] === 0x66 &&
-          buf[5] === 0x74 &&
-          buf[6] === 0x79 &&
-          buf[7] === 0x70) ||
-        (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x00);
+        buf[4] === 0x66 &&
+        buf[5] === 0x74 &&
+        buf[6] === 0x79 &&
+        buf[7] === 0x70;
 
       if (isZip) {
         resolve({ type: "zip", ext: ".zip", originalFilename });
@@ -347,8 +346,9 @@ Your job is to normalize each name by:
 - Replacing dots and underscores with spaces
 - Keeping the show/movie title, episode info (e.g. S01E03), and resolution (e.g. 720p) if present
 - Removing technical junk like: x265, x264, HEVC, 10bit, 8bit, WEB-DL, WEBRip, BluRay, HDRip, HDTV, AAC, AC3, language codes (HIN, KOR, ENG, etc), ESub, YIFY, YTS, and similar tags
-- Keeping the original file extension
-- Output clean readable names like: True Beauty S01E03 720p.mkv or Inception 1080p.mkv
+- Keeping the original file extension with the dot (e.g. .mkv, .mp4)
+- The extension MUST always start with a dot — never output "mkv" without the dot
+- Output clean readable names like: True Beauty S01E03 720p.mkv or Inception 1080p.mp4
 
 Return only a JSON array of the cleaned names in the same order. No markdown, no backticks, no explanation.`,
       },
@@ -662,8 +662,8 @@ async function main() {
   await reportUploads(true);
 
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
-  const ok = allFiles.map((f) => `  ${f.renamedName}`).join("\n");
-  await callback("done", `Done ${allFiles.length}  ${formatBytesShort(totalSize)}\n${ok}`);
+  const fileList = allFiles.map((f) => `  ${f.renamedName}`).join("\n");
+  await callback("done", `Done ${allFiles.length}  ${formatBytesShort(totalSize)}\n${fileList}`);
 }
 
 main().catch(async (err) => {
