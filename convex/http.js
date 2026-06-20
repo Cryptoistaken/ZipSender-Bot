@@ -34,7 +34,7 @@ http.route({
 
       await ctx.runAction(internal.telegram.answerCallbackQuery, {
         callbackQueryId: cb.id,
-        text: "Working...",
+        text: "Working",
       });
 
       if (fromId !== ownerChatId) {
@@ -64,7 +64,7 @@ http.route({
                 ? r.conclusion === "success"
                   ? "ok"
                   : "fail"
-                : "...";
+                : "pending";
             const ageMin = Math.floor(
               (Date.now() - new Date(r.createdAt)) / 60000,
             );
