@@ -34,7 +34,7 @@ http.route({
 
       await ctx.runAction(internal.telegram.answerCallbackQuery, {
         callbackQueryId: cb.id,
-        text: "Working",
+        text: "Working...",
       });
 
       if (fromId !== ownerChatId) {
@@ -64,7 +64,7 @@ http.route({
                 ? r.conclusion === "success"
                   ? "ok"
                   : "fail"
-                : "pending";
+                : "...";
             const ageMin = Math.floor(
               (Date.now() - new Date(r.createdAt)) / 60000,
             );
@@ -217,8 +217,7 @@ http.route({
     await ctx.runAction(internal.telegram.editMessage, {
       chatId,
       msgId: statusMsgId,
-      text: "Running",
-      replyMarkup: stopKeyboard(jobId),
+      text: "Running...",
     });
 
     return new Response("ok", { status: 200 });
@@ -249,7 +248,6 @@ http.route({
           chatId: cid,
           msgId: job.msgId,
           text: message,
-          replyMarkup: stopKeyboard(jobId),
         });
       } else {
         const newMsgId = await ctx.runAction(internal.telegram.sendMessage, {

@@ -1,24 +1,14 @@
 import fs from "fs";
 import path from "path";
+import { TelegramClient } from "telegram";
+import { StringSession } from "telegram/sessions/index.js";
+import { Logger } from "telegram/extensions/index.js";
 import OpenAI from "openai";
 import axios from "axios";
 import unzipper from "unzipper";
-import FormData from "form-data";
 
 const DEBUG = process.env.DEBUG === "true";
 const LOG_FILE = ".logs/worker.jsonl";
-
-function ts() {
-  const d = new Date();
-  return d.toISOString().slice(11, 23);
-}
-
-const origConsoleLog = console.log;
-const origConsoleWarn = console.warn;
-const origConsoleError = console.error;
-console.log = (...args) => origConsoleLog(`[${ts()}]`, ...args);
-console.warn = (...args) => origConsoleWarn(`[${ts()}]`, ...args);
-console.error = (...args) => origConsoleError(`[${ts()}]`, ...args);
 
 function ensureLogDir() {
   try {
@@ -111,9 +101,6 @@ const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH;
 const TELEGRAM_SESSION = process.env.TELEGRAM_SESSION;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-
-const RELAY_URL = process.env.RELAY_URL || "";
-const RELAY_API_KEY = process.env.RELAY_API_KEY || "";
 
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"];
 
@@ -397,6 +384,7 @@ async function sendVideoToAunt(
   fileIndex,
   total,
   onProgress,
+  sharedClient,
 ) {
   logDebug("sendVideoToAunt:entry", `sending file ${fileIndex}/${total}`, {
     renamedName,
@@ -405,6 +393,7 @@ async function sendVideoToAunt(
   });
   const dir = path.dirname(filePath);
   const renamedPath = path.join(dir, renamedName);
+
   if (filePath !== renamedPath && fs.existsSync(filePath)) {
     fs.renameSync(filePath, renamedPath);
   }
@@ -413,42 +402,57 @@ async function sendVideoToAunt(
   const startTime = Date.now();
   let lastPct = -1;
 
-  const form = new FormData();
-  form.append("file", fs.createReadStream(renamedPath), renamedName);
-  form.append("auntUsername", AUNT_USERNAME);
-  form.append("chatId", CHAT_ID);
-  form.append("msgId", String(MSG_ID || ""));
-  form.append("renamedName", renamedName);
-  form.append("callbackUrl", CALLBACK_URL);
-  form.append("callbackSecret", CALLBACK_SECRET);
-
-  const res = await axios.post(`${RELAY_URL}/upload`, form, {
-    headers: {
-      Authorization: `Bearer ${RELAY_API_KEY}`,
-      "x-job-id": JOB_ID,
-      ...form.getHeaders(),
-    },
-    maxBodyLength: Infinity,
-    onUploadProgress: (e) => {
-      if (!e.total) return;
-      const pct = Math.floor((e.loaded / e.total) * 100);
-      if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
-        lastPct = pct;
-        const elapsed = (Date.now() - startTime) / 1000 || 0.001;
-        const speed = e.loaded / elapsed;
-        if (onProgress) onProgress(pct, e.loaded, e.total, speed);
-      }
-    },
+  const silentLogger = new Logger("none");
+  const session = new StringSession(TELEGRAM_SESSION);
+  const client = sharedClient || new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+    connectionRetries: 5,
+    retryDelay: 1000,
+    baseLogger: silentLogger,
   });
 
-  const elapsed = (Date.now() - startTime) / 1000;
-  if (onProgress) onProgress(100, fileSize, fileSize, fileSize / elapsed);
-  logInfo("sendVideoToAunt:done", `file sent to relay`, {
-    renamedName,
-    fileIndex,
-    total,
-    size: fileSize,
-  });
+  const origWarn = console.warn;
+  const origError = console.error;
+  const filterGramJS = (...args) => {
+    const txt = args.join(" ");
+    if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
+    if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn.apply(console, args);
+    else origError.apply(console, args);
+  };
+  console.warn = filterGramJS;
+  console.error = filterGramJS;
+
+  try {
+    if (!sharedClient) await client.connect();
+
+    await client.sendFile(AUNT_USERNAME, {
+      file: renamedPath,
+      forceDocument: true,
+      workers: 15,
+      progressCallback: async (progress) => {
+        const pct = Math.floor(progress * 100);
+        if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
+          lastPct = pct;
+          const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+          const speed = (progress * fileSize) / elapsed;
+          const uploaded = progress * fileSize;
+          if (onProgress) onProgress(pct, uploaded, fileSize, speed);
+        }
+      },
+    });
+    logInfo("sendVideoToAunt:done", `file sent`, {
+      renamedName,
+      fileIndex,
+      total,
+      size: fileSize,
+    });
+  } finally {
+    console.warn = origWarn;
+    console.error = origError;
+    if (!sharedClient) {
+      await client.disconnect();
+      await client.destroy();
+    }
+  }
 }
 
 async function main() {
@@ -458,7 +462,6 @@ async function main() {
     job_id: JOB_ID,
     callback_url_set: !!CALLBACK_URL,
   });
-
   if (FILE_IDS.length === 0 || !CHAT_ID || !JOB_ID) {
     console.error(
       "missing required inputs: INPUT_FILE_ID, INPUT_CHAT_ID, INPUT_JOB_ID",
@@ -578,7 +581,7 @@ async function main() {
     console.log("groq error, using original names:", err.message);
   }
 
-  const uploadStates = allFiles.map((f) => ({ pct: 0, uploaded: 0, total: f.size, speed: 0, done: false }));
+  const uploadStates = allFiles.map((f) => ({ pct: 0, uploaded: 0, total: f.size, speed: 0 }));
   let lastUploadReport = 0;
   let isUploadingReport = false;
 
@@ -590,20 +593,13 @@ async function main() {
     isUploadingReport = true;
 
     try {
-      const lines = [`Uploading ${allFiles.length} file(s)\n`];
-      uploadStates.forEach((s, i) => {
-        const name = allFiles[i].renamedName;
-        if (s.done) {
-          lines.push(`${name}\n  Done`);
-        } else if (s.pct === 0 && s.uploaded === 0) {
-          return;
-        } else {
-          const bar = buildBar(s.pct);
-          const spec = s.total > 0
-            ? `${s.pct}%  ${formatBytesShort(s.uploaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
-            : `${formatBytesShort(s.uploaded)}  ${formatSpeedShort(s.speed)}`;
-          lines.push(`${name}\n  ${bar}  ${spec}`);
-        }
+      const lines = [];
+      uploadStates.forEach((s) => {
+        const bar = buildBar(s.pct);
+        const spec = s.total > 0
+          ? `${s.pct}%  ${formatBytesShort(s.uploaded)} of ${formatBytesShort(s.total)}  ${formatSpeedShort(s.speed)}`
+          : `${formatBytesShort(s.uploaded)}  ${formatSpeedShort(s.speed)}`;
+        lines.push(`${bar}  ${spec}`);
       });
       await callback("progress", lines.join("\n"));
     } finally {
@@ -611,25 +607,63 @@ async function main() {
     }
   }
 
-  await callback("progress", "Sending to relay...");
+  const silentLogger = new Logger("none");
+  const session = new StringSession(TELEGRAM_SESSION);
+  const uploadClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+    connectionRetries: 5,
+    retryDelay: 1000,
+    baseLogger: silentLogger,
+  });
 
-  for (let i = 0; i < allFiles.length; i++) {
+  const origWarn2 = console.warn;
+  const origError2 = console.error;
+  const filterGramJS2 = (...args) => {
+    const txt = args.join(" ");
+    if (txt.includes("sender already has some hanging states") || txt.includes("reconnecting")) return;
+    if (args[0] && typeof args[0] === "string" && args[0].includes("WARN")) origWarn2.apply(console, args);
+    else origError2.apply(console, args);
+  };
+  console.warn = filterGramJS2;
+  console.error = filterGramJS2;
+
+  try {
+    await uploadClient.connect();
+
+    for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
     try {
-      await sendVideoToAunt(file.fullPath, file.renamedName, i + 1, allFiles.length);
-      uploadStates[i].done = true;
+      await sendVideoToAunt(
+        file.fullPath,
+        file.renamedName,
+        i + 1,
+        allFiles.length,
+        (pct, uploaded, total, speed) => {
+          uploadStates[i] = { pct, uploaded, total, speed };
+          reportUploads();
+        },
+        uploadClient,
+      );
       fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
     } catch (err) {
       logError("main:upload", `upload failed for ${file.renamedName}`, err, {
-        fullPath: file.fullPath, index: i + 1,
+        fullPath: file.fullPath,
+        index: i + 1,
       });
       await callback("progress", `Failed ${file.renamedName}: ${err.message}`);
     }
   }
 
+  } finally {
+    await uploadClient.disconnect();
+    await uploadClient.destroy();
+    console.warn = origWarn2;
+    console.error = origError2;
+  }
+  await reportUploads(true);
+
   const totalSize = allFiles.reduce((s, f) => s + f.size, 0);
   const fileList = allFiles.map((f) => `  ${f.renamedName}`).join("\n");
-  console.log(`Sent ${allFiles.length} files to relay  ${formatBytesShort(totalSize)}\n${fileList}`);
+  await callback("done", `Done ${allFiles.length}  ${formatBytesShort(totalSize)}\n${fileList}`);
 }
 
 main().catch(async (err) => {
