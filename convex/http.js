@@ -64,7 +64,7 @@ http.route({
                 ? r.conclusion === "success"
                   ? "ok"
                   : "fail"
-                : "...";
+                : "";
             const ageMin = Math.floor(
               (Date.now() - new Date(r.createdAt)) / 60000,
             );
