@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "npx convex dev",
     "deploy": "npx convex deploy",
-    "setup:webhook": "node scripts/set-webhook.js",
-    "setup:session": "node scripts/gramjs-setup.js"
+    "setup:webhook": "node scripts/setWebhook.js",
+    "setup:session": "node scripts/gramjsSetup.js"
   },
   "dependencies": {
     "axios": "^1.9.0",
