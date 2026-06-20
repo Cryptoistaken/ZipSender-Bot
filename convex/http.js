@@ -15,7 +15,7 @@ function extractGDriveIds(text) {
 function stopKeyboard(jobId) {
   return {
     inline_keyboard: [
-      [{ text: "⏹ Stop", callback_data: `action:stop:${jobId}` }],
+      [{ text: "Stop", callback_data: `action:stop:${jobId}` }],
     ],
   };
 }
@@ -127,7 +127,7 @@ http.route({
           await ctx.runAction(internal.telegram.editMessage, {
             chatId,
             msgId: job.msgId,
-            text: "⏹ Stopped by user.",
+            text: "Stopped by user.",
             replyMarkup: { inline_keyboard: [] },
           });
         }
@@ -218,6 +218,7 @@ http.route({
       chatId,
       msgId: statusMsgId,
       text: "Running...",
+      replyMarkup: stopKeyboard(jobId),
     });
 
     return new Response("ok", { status: 200 });
@@ -248,6 +249,7 @@ http.route({
           chatId: cid,
           msgId: job.msgId,
           text: message,
+          replyMarkup: stopKeyboard(jobId),
         });
       } else {
         const newMsgId = await ctx.runAction(internal.telegram.sendMessage, {
