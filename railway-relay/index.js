@@ -6,6 +6,10 @@ import { Logger } from "telegram/extensions/index.js";
 import fs from "fs";
 import path from "path";
 
+function ts() {
+  return new Date().toISOString().slice(11, 23);
+}
+
 const PORT = process.env.PORT || 3000;
 const RELAY_API_KEY = process.env.RELAY_API_KEY || "zipsender-relay-key-2024";
 const TELEGRAM_API_ID = Number(process.env.TELEGRAM_API_ID || "25180122");
@@ -29,16 +33,23 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
   const { auntUsername, chatId, msgId, renamedName, callbackUrl, callbackSecret } = req.body;
   if (!auntUsername) return res.status(400).json({ error: "no auntUsername" });
 
-  res.json({ ok: true, file: file.filename });
-
   const jobId = req.headers["x-job-id"] || "";
-
-  const filePath = file.path;
   const fileName = renamedName || file.originalname || "file";
-  const properPath = path.join(path.dirname(filePath), fileName);
-  try { fs.renameSync(filePath, properPath); } catch {} 
-  const silentLogger = new Logger("none");
+  const fileSizeMb = (fs.statSync(file.path).size / 1024 / 1024).toFixed(1);
 
+  console.log(`[${ts()}] [${jobId.slice(0,8)}] RECEIVED ${fileName} (${fileSizeMb} MB) from aunt=${auntUsername}`);
+
+  res.json({ ok: true, file: fileName });
+
+  const properPath = path.join(path.dirname(file.path), fileName);
+  try {
+    fs.renameSync(file.path, properPath);
+    console.log(`[${ts()}] [${jobId.slice(0,8)}] RENAMED → ${fileName}`);
+  } catch (e) {
+    console.log(`[${ts()}] [${jobId.slice(0,8)}] RENAME FAILED: ${e.message}`);
+  }
+
+  const silentLogger = new Logger("none");
   const session = new StringSession(TELEGRAM_SESSION);
   const client = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
     connectionRetries: 5, retryDelay: 1000, baseLogger: silentLogger,
@@ -49,9 +60,11 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
   const startTime = Date.now();
   const fileSize = fs.statSync(properPath).size;
 
+  console.log(`[${ts()}] [${jobId.slice(0,8)}] CONNECTING to Telegram...`);
+
   let editQueue = Promise.resolve();
   function queueEdit(text) {
-    editQueue = editQueue.then(() => editOrSend(text).catch(e => console.error("editOrSend err:", e.message)));
+    editQueue = editQueue.then(() => editOrSend(text).catch(e => console.error(`[${ts()}] editOrSend err:`, e.message)));
   }
 
   async function editOrSend(text) {
@@ -63,7 +76,7 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: chatId, message_id: statusMsgId, text }),
         });
-        if (!res.ok) console.error("edit failed:", res.status, await res.text().catch(()=>""));
+        if (!res.ok) console.error(`[${ts()}] edit failed:`, res.status, await res.text().catch(()=>""));
       } else {
         const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           method: "POST",
@@ -72,9 +85,9 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
         });
         const data = await res.json();
         if (data.ok) statusMsgId = data.result.message_id;
-        else console.error("send failed:", res.status, JSON.stringify(data));
+        else console.error(`[${ts()}] send failed:`, res.status, JSON.stringify(data));
       }
-    } catch (e) { console.error("editOrSend exception:", e.message); }
+    } catch (e) { console.error(`[${ts()}] editOrSend exception:`, e.message); }
   }
 
   async function doCallback(event, message) {
@@ -85,12 +98,16 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId, chat_id: chatId, event, message, secret: callbackSecret }),
       });
-    } catch {}
+      console.log(`[${ts()}] [${jobId.slice(0,8)}] CALLBACK ${event}`);
+    } catch (e) {
+      console.error(`[${ts()}] callback failed:`, e.message);
+    }
   }
 
   try {
     await queueEdit(`Relay: Uploading ${fileName}...`);
     await client.connect();
+    console.log(`[${ts()}] [${jobId.slice(0,8)}] CONNECTED, uploading...`);
 
     await client.sendFile(auntUsername, {
       file: properPath,
@@ -102,25 +119,30 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
           lastPct = pct;
           const elapsed = (Date.now() - startTime) / 1000 || 0.001;
           const speed = (progress * fileSize) / elapsed;
-          queueEdit(`Relay: ${fileName}\n${pct}%  ${(speed / 1024 / 1024).toFixed(1)} MB/s`);
+          const speedMb = (speed / 1024 / 1024).toFixed(1);
+          console.log(`[${ts()}] [${jobId.slice(0,8)}] UPLOAD ${pct}% ${speedMb} MB/s`);
+          queueEdit(`Relay: ${fileName}\n${pct}%  ${speedMb} MB/s`);
         }
       },
     });
 
     const totalTime = (Date.now() - startTime) / 1000;
-    const msg = `Relay: Done ${fileName} in ${totalTime.toFixed(1)}s`;
+    const totalSpeed = (fileSize / 1024 / 1024 / totalTime).toFixed(1);
+    const msg = `Relay: Done ${fileName} in ${totalTime.toFixed(1)}s (${totalSpeed} MB/s)`;
+    console.log(`[${ts()}] [${jobId.slice(0,8)}] DONE in ${totalTime.toFixed(1)}s (${totalSpeed} MB/s)`);
     await queueEdit(msg);
     await doCallback("done", msg);
   } catch (err) {
+    console.error(`[${ts()}] [${jobId.slice(0,8)}] FAILED: ${err.message}`);
     const msg = `Relay: Failed ${fileName}: ${err.message}`;
     await queueEdit(msg);
     await doCallback("error", msg);
   } finally {
-    try { fs.unlinkSync(properPath); } catch {}
+    try { fs.unlinkSync(properPath); console.log(`[${ts()}] [${jobId.slice(0,8)}] CLEANUP deleted ${fileName}`); } catch {}
     try { await client.disconnect(); await client.destroy(); } catch {}
   }
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => console.log(`Relay running on ${PORT}`));
+app.listen(PORT, () => console.log(`[${ts()}] Relay running on ${PORT}`));
