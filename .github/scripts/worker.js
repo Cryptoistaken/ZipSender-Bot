@@ -434,7 +434,7 @@ async function sendVideoToAunt(
     await client.sendFile(AUNT_USERNAME, {
       file: renamedPath,
       forceDocument: false,
-      workers: 8,
+      workers: 1,
       progressCallback: async (progress) => {
         const pct = Math.floor(progress * 100);
         if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
