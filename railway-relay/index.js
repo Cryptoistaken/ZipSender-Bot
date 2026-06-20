@@ -4,6 +4,7 @@ import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { Logger } from "telegram/extensions/index.js";
 import fs from "fs";
+import path from "path";
 
 const PORT = process.env.PORT || 3000;
 const RELAY_API_KEY = process.env.RELAY_API_KEY || "zipsender-relay-key-2024";
@@ -34,6 +35,8 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
 
   const filePath = file.path;
   const fileName = renamedName || file.originalname || "file";
+  const properPath = path.join(path.dirname(filePath), fileName);
+  try { fs.renameSync(filePath, properPath); } catch {} 
   const silentLogger = new Logger("none");
 
   const session = new StringSession(TELEGRAM_SESSION);
@@ -44,7 +47,7 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
   let statusMsgId = msgId && msgId !== "null" && msgId !== "" ? Number(msgId) : null;
   let lastPct = -1;
   const startTime = Date.now();
-  const fileSize = fs.statSync(filePath).size;
+  const fileSize = fs.statSync(properPath).size;
 
   let editQueue = Promise.resolve();
   function queueEdit(text) {
@@ -90,7 +93,7 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
     await client.connect();
 
     await client.sendFile(auntUsername, {
-      file: filePath,
+      file: properPath,
       forceDocument: true,
       workers: 15,
       progressCallback: (progress) => {
@@ -113,7 +116,7 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
     await queueEdit(msg);
     await doCallback("error", msg);
   } finally {
-    try { fs.unlinkSync(filePath); } catch {}
+    try { fs.unlinkSync(properPath); } catch {}
     try { await client.disconnect(); await client.destroy(); } catch {}
   }
 });
