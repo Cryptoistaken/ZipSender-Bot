@@ -660,20 +660,33 @@ async function main() {
       }));
       if (imported.users.length > 0) return imported.users[0];
     } catch {}
+    try {
+      const users = await client.invoke(new Api.users.GetUsers({
+        id: [new Api.InputUser({ userId: BigInt(target), accessHash: BigInt(0) })],
+      }));
+      if (users.length > 0 && !(users[0] instanceof Api.UserEmpty)) return users[0];
+    } catch {}
     return null;
   }
 
   let uploadTarget;
   let targetLabel;
+  let useBotFallback = false;
 
   try {
     await uploadClient.connect();
     uploadTarget = await resolveTarget(AUNT_USERNAME, uploadClient);
-    targetLabel = AUNT_USERNAME;
+    targetLabel = "aunt(" + AUNT_USERNAME + ")";
     if (!uploadTarget) {
+      logWarn("main:upload", "AUNT_USERNAME unresolvable, falling back to CHAT_ID", { AUNT_USERNAME, CHAT_ID });
       uploadTarget = await resolveTarget(CHAT_ID, uploadClient);
-      targetLabel = CHAT_ID;
+      targetLabel = "chat(" + CHAT_ID + ")";
+      if (!uploadTarget) {
+        logWarn("main:upload", "CHAT_ID also unresolvable, will use bot API", { CHAT_ID });
+        useBotFallback = true;
+      }
     }
+    logInfo("main:upload", "target resolved", { targetLabel, useBotFallback });
 
     for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
