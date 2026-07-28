@@ -1,19 +1,13 @@
 import "dotenv/config";
 import readline from "readline";
 import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions/index.js";
+import { StringSession } from "telegram/sessions";
 
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 
 if (!apiId || !apiHash) {
   console.error("Set TELEGRAM_API_ID and TELEGRAM_API_HASH in .env first");
-  process.exit(1);
-}
-
-const phone = process.env.PHONE || process.argv[2];
-if (!phone) {
-  console.error("Pass phone number as arg or set PHONE env var");
   process.exit(1);
 }
 
@@ -26,14 +20,17 @@ function ask(q) {
   return new Promise((resolve) => rl.question(q, resolve));
 }
 
-const client = new TelegramClient(new StringSession(""), apiId, apiHash, {
-  connectionRetries: 5,
-});
+const client = new TelegramClient(
+  new StringSession(""),
+  apiId,
+  apiHash,
+  { connectionRetries: 5 }
+);
 
-console.log(`Starting GramJS session setup for ${phone}...\n`);
+console.log("GramJS interactive session setup\n");
 
 await client.start({
-  phoneNumber: async () => phone,
+  phoneNumber: async () => ask("Phone number (+countrycode...): "),
   password: async () => ask("2FA password (if any, press Enter): "),
   phoneCode: async () => ask("Code from Telegram: "),
   onError: (err) => console.error(err),
