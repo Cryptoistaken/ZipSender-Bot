@@ -425,14 +425,23 @@ async function sendVideoToAunt(
   try {
     if (!sharedClient) {
       await client.connect();
+      let resolved = null;
       try {
-        entity = await client.getEntity(AUNT_USERNAME);
+        resolved = await client.getEntity(AUNT_USERNAME);
       } catch {
-        entity = new Api.InputPeerUser({
-          userId: BigInt(AUNT_USERNAME),
-          accessHash: BigInt(0),
-        });
+        try {
+          const imported = await client.invoke(new Api.contacts.ImportContacts({
+            contacts: [new Api.InputPhoneContact({
+              clientId: BigInt(Date.now()),
+              phone: "+" + AUNT_USERNAME,
+              firstName: "Target",
+              lastName: "",
+            })],
+          }));
+          if (imported.users.length > 0) resolved = imported.users[0];
+        } catch {}
       }
+      if (resolved) entity = resolved;
     }
 
     await client.sendFile(entity, {
@@ -636,33 +645,63 @@ async function main() {
   console.warn = filterGramJS2;
   console.error = filterGramJS2;
 
+  async function resolveTarget(target, client) {
+    try {
+      return await client.getEntity(target);
+    } catch {}
+    try {
+      const imported = await client.invoke(new Api.contacts.ImportContacts({
+        contacts: [new Api.InputPhoneContact({
+          clientId: BigInt(Date.now()),
+          phone: "+" + target,
+          firstName: "Target",
+          lastName: "",
+        })],
+      }));
+      if (imported.users.length > 0) return imported.users[0];
+    } catch {}
+    return null;
+  }
+
+  let uploadTarget;
+  let targetLabel;
+
   try {
     await uploadClient.connect();
-    let auntEntity;
-    try {
-      auntEntity = await uploadClient.getEntity(AUNT_USERNAME);
-    } catch {
-      auntEntity = new Api.InputPeerUser({
-        userId: BigInt(AUNT_USERNAME),
-        accessHash: BigInt(0),
-      });
+    uploadTarget = await resolveTarget(AUNT_USERNAME, uploadClient);
+    targetLabel = AUNT_USERNAME;
+    if (!uploadTarget) {
+      uploadTarget = await resolveTarget(CHAT_ID, uploadClient);
+      targetLabel = CHAT_ID;
     }
 
     for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
     try {
-      await sendVideoToAunt(
-        file.fullPath,
-        file.renamedName,
-        i + 1,
-        allFiles.length,
-        (pct, uploaded, total, speed) => {
-          uploadStates[i] = { pct, uploaded, total, speed };
-          reportUploads();
-        },
-        uploadClient,
-        auntEntity,
-      );
+      if (uploadTarget) {
+        await sendVideoToAunt(
+          file.fullPath,
+          file.renamedName,
+          i + 1,
+          allFiles.length,
+          (pct, uploaded, total, speed) => {
+            uploadStates[i] = { pct, uploaded, total, speed };
+            reportUploads();
+          },
+          uploadClient,
+          uploadTarget,
+        );
+      } else {
+        const formData = new FormData();
+        const fileBuf = fs.readFileSync(file.fullPath);
+        formData.append("chat_id", CHAT_ID);
+        formData.append("document", new Blob([fileBuf]), file.renamedName);
+        await axios.post(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendDocument`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        });
+      }
       fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
     } catch (err) {
       logError("main:upload", `upload failed for ${file.renamedName}`, err, {
