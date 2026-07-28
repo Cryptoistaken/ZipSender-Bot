@@ -385,6 +385,7 @@ async function sendVideoToAunt(
   total,
   onProgress,
   sharedClient,
+  auntEntity,
 ) {
   logDebug("sendVideoToAunt:entry", `sending file ${fileIndex}/${total}`, {
     renamedName,
@@ -420,10 +421,14 @@ async function sendVideoToAunt(
   console.warn = filterGramJS;
   console.error = filterGramJS;
 
+  let entity = auntEntity;
   try {
-    if (!sharedClient) await client.connect();
+    if (!sharedClient) {
+      await client.connect();
+      entity = await client.getEntity(AUNT_USERNAME);
+    }
 
-    await client.sendFile(AUNT_USERNAME, {
+    await client.sendFile(entity, {
       file: renamedPath,
       forceDocument: true,
       workers: 8,
@@ -626,6 +631,7 @@ async function main() {
 
   try {
     await uploadClient.connect();
+    const auntEntity = await uploadClient.getEntity(AUNT_USERNAME);
 
     for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
@@ -640,6 +646,7 @@ async function main() {
           reportUploads();
         },
         uploadClient,
+        auntEntity,
       );
       fs.rmSync(path.join(path.dirname(file.fullPath), file.renamedName), { force: true });
     } catch (err) {
