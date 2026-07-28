@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { TelegramClient } from "telegram";
+import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { Logger } from "telegram/extensions/index.js";
 import OpenAI from "openai";
@@ -425,7 +425,14 @@ async function sendVideoToAunt(
   try {
     if (!sharedClient) {
       await client.connect();
-      entity = await client.getEntity(AUNT_USERNAME);
+      try {
+        entity = await client.getEntity(AUNT_USERNAME);
+      } catch {
+        entity = new Api.InputPeerUser({
+          userId: BigInt(AUNT_USERNAME),
+          accessHash: BigInt(0),
+        });
+      }
     }
 
     await client.sendFile(entity, {
@@ -631,7 +638,15 @@ async function main() {
 
   try {
     await uploadClient.connect();
-    const auntEntity = await uploadClient.getEntity(AUNT_USERNAME);
+    let auntEntity;
+    try {
+      auntEntity = await uploadClient.getEntity(AUNT_USERNAME);
+    } catch {
+      auntEntity = new Api.InputPeerUser({
+        userId: BigInt(AUNT_USERNAME),
+        accessHash: BigInt(0),
+      });
+    }
 
     for (let i = 0; i < allFiles.length; i++) {
     const file = allFiles[i];
