@@ -622,11 +622,11 @@ async function main() {
     }
   }
 
-  const silentLogger = new Logger("none");
-  const session = new StringSession(TELEGRAM_SESSION);
-  const uploadClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+  const uploadSilentLogger = new Logger("none");
+  const uploadSession = new StringSession(TELEGRAM_SESSION);
+  const uploadClient = new TelegramClient(uploadSession, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
     retryDelay: 1000,
-    baseLogger: silentLogger,
+    baseLogger: uploadSilentLogger,
   });
 
   const origWarn2 = console.warn;
