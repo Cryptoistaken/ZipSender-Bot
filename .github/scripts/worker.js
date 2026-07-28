@@ -468,6 +468,22 @@ async function main() {
     process.exit(1);
   }
 
+  const silentLogger = new Logger("none");
+  const session = new StringSession(TELEGRAM_SESSION);
+  const checkClient = new TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, {
+    connectionRetries: 1,
+    baseLogger: silentLogger,
+  });
+  try {
+    await checkClient.connect({ timeout: 10000 });
+    await checkClient.disconnect();
+    await checkClient.destroy();
+  } catch (err) {
+    console.error("telegram session invalid:", err.message);
+    await callback("error", `Session expired. Run setup:session to regenerate.\n\n${err.message}`);
+    process.exit(1);
+  }
+
   fs.mkdirSync("tmp", { recursive: true });
 
   await callback("progress", "Downloading");
